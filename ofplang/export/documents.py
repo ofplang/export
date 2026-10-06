@@ -199,14 +199,6 @@ def warnings(docs: DocumentSet) -> list[Finding]:
                     "shown as an ordinary atomic step; its code is not read",
                 )
             )
-        if "scheduling" in d:
-            out.append(
-                Finding(
-                    "scheduling policies (`scheduling`)",
-                    f"{base}.scheduling",
-                    "the preferences are not drawn",
-                )
-            )
         body = d.get("body")
         nodes = body.get("nodes") if isinstance(body, dict) else None
         for i, n in enumerate(nodes if isinstance(nodes, list) else []):

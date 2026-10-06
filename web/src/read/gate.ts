@@ -7,8 +7,8 @@
  * defined by v0 but not supported by a particular implementation, the document
  * is valid v0 but unsupported by that implementation" (§4.4).
  *
- * The viewer supports **none** of the seven optional v0 features. Saying so
- * plainly is the point — a silently wrong picture is worse than a refusal.
+ * The viewer supports **none** of the optional v0 features listed below. Saying
+ * so plainly is the point — a silently wrong picture is worse than a refusal.
  *
  * The decision rests on what the document *requires*, derived from its body,
  * not on what it declares. `features` may over-declare (§4.1: extra features
@@ -26,7 +26,6 @@ export const V0_FEATURES = [
   "node_branch",
   "generic_processes",
   "python_script_processes",
-  "scheduling_policies",
 ] as const;
 
 export type FeatureName = (typeof V0_FEATURES)[number];
@@ -100,14 +99,6 @@ export function gateWorkflow(raw: unknown): GateReport {
         what: "an inline script process (`script`)",
         at: at(base, "script"),
         why: "shown as an ordinary atomic step; its code is not read (§22)",
-      });
-    }
-    if (def["scheduling"] !== undefined) {
-      derived.add("scheduling_policies");
-      findings.push({
-        what: "scheduling policies (`scheduling`)",
-        at: at(base, "scheduling"),
-        why: "the preferences are not drawn, so the picture omits why the solver placed things as it did (§23)",
       });
     }
 

@@ -136,18 +136,6 @@ entry: add
     expect(r.derived).toEqual(["python_script_processes"]);
   });
 
-  it("`scheduling` derives scheduling_policies (§23)", () => {
-    const r = gate(`
-processes:
-  main:
-    kind: composite
-    scheduling: []
-    body: { nodes: [], returns: {} }
-entry: main
-`);
-    expect(r.derived).toEqual(["scheduling_policies"]);
-  });
-
   it("reports several at once, sorted", () => {
     const r = gate(`
 processes:
