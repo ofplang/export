@@ -46,7 +46,7 @@ Also reachable as `ofp export view …` (and `lc export view …` under labcode)
 | 3 | refused — nothing written | tell the person why (stderr): e.g. a **joint plan** (several workflows scheduled together as `jobs`) is not drawn by this viewer |
 
 Warnings (exit 0) mean part of the workflow is shown only as its source
-structure — `$import` not expanded, generics, structured nodes — or that
+structure — `$import` not expanded, generics — or that
 `--gantt object` was asked for without a workflow, so the page opens on the
 device view. The file is still worth sending; say what is missing.
 

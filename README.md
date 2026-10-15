@@ -24,7 +24,7 @@ it**, to open from disk or send to someone. It is also `ofp export view`
 `lc export view` (`labcode[export]`, from labcode 0.9).
 
 **→ [ofplang.github.io/export](https://ofplang.github.io/export/)**
-— twelve plans are bundled (two of them curated here: `data_flow`, Pure Data and an entry with inputs and outputs, and `plate_assay`, an assay whose five Objects each meet a different fate); `?doc=plate_assay` opens one directly. Drop your own
+— seventeen plans are bundled (two of them curated here: `data_flow`, Pure Data and an entry with inputs and outputs, and `plate_assay`, an assay whose five Objects each meet a different fate); `?doc=plate_assay` opens one directly. Drop your own
 YAML on the window to read that instead: a plan, a workflow, an environment, or
 all three at once. A workflow on its own is fine — the graph does not need a
 plan to be read. Either pane can take the whole window: *Both / Workflow / Plan*
@@ -40,6 +40,14 @@ activity, and by **Object** — one lane per plate or sample, from where it
 appears to where it is used up, with every step, move and wait on the way.
 Which Object is which comes from the workflow's `objects` declarations, since
 a plan names none; where they cannot be followed, that view is not offered.
+
+Structured nodes — `map`, `fold`, `do_while`, `branch` — are drawn as the one node
+they are, with how many times the plan runs each: a `map`, `fold` or loop opens
+onto its body, and a `branch` onto both of its arms, the one the run took drawn
+solid and one the plan only assumes dashed. A plan made before the run decides
+something says so, and the chart shows it: the moment of each decision, the
+spots kept so the plan holds whichever way it goes, the gate the outcome leaves
+by, and the work that may not happen at all.
 
 > **Status: early but usable.** Both panes work and are linked: pick a bar and
 > the workflow box it came from lights up, pick a box and everything under it
@@ -127,7 +135,7 @@ A development build has none, so it takes `--viewer-url`.
 | `datasets/curated/` | plans bundled here that the submodule does not ship (`data_flow`), with their provenance |
 | `web/tests/golden/` | every example the pinned submodule ships must read |
 | `web/tests/routing.test.ts` | no arc of any bundled workflow runs through a box it does not join |
-| `external/ofplang-schedule` | submodule, pinned by tag — specifications and examples |
+| `external/ofplang-schedule` | submodule, pinned to a commit of ofplang/schedule — specifications and examples |
 | `prototype/` | a single-file look-and-feel study; not the codebase |
 | `web/public/favicon.png` | the ofplang mark, from [`ofplang/spec`](https://github.com/ofplang/spec) `logos/symbol-circle.png`; the SVG version is inline in `web/index.html` |
 
@@ -140,9 +148,8 @@ here are a deliberate, bounded re-implementation of two stable schemas —
 `SPECIFICATIONS.md` §5 (environment) and §6 (execution document) — kept honest
 by the golden test against the pinned submodule's own examples.
 
-Anything outside that subset — `$import`, generics, structured nodes, and
-joint plans that schedule several workflows together as jobs — is refused
-rather than guessed at.
+Anything outside that subset — `$import`, generics, and joint plans that
+schedule several workflows together as jobs — is refused rather than guessed at.
 
 ## Working on it
 
