@@ -16,7 +16,7 @@
  * box that stands for it drops the position (`sourcePath`).
  */
 
-import { GATE_OUT, isGatePath, pathKey, sourcePath, type ArcRef, type NodePath } from "./common";
+import { GATE_OUT, isGatePath, jobScoped, pathKey, sourcePath, type ArcRef, type NodePath } from "./common";
 import type { Scene } from "./scene";
 import { armsOf, nodePorts } from "./structure";
 import type { NodeInvocation, NodeKind, Workflow } from "./workflow";
@@ -294,9 +294,9 @@ export function ancestorKeys(root: GraphNode, path: NodePath, process?: string):
     .map((n) => n.key);
 }
 
-/** What runs at one end of an arc: the step at that exact path, if the plan has one. */
-export function processAt(scene: Scene, path: NodePath): string | undefined {
-  const at = scene.byNode.get(pathKey(path));
+/** What runs at one end of an arc: the step at that exact path, in that job, if the plan has one. */
+export function processAt(scene: Scene, path: NodePath, job?: string): string | undefined {
+  const at = scene.byNode.get(jobScoped(job, pathKey(path)));
   const a = at?.length === 1 ? scene.activities[at[0]!] : undefined;
   return a?.kind === "processing" ? a.process : undefined;
 }
@@ -307,14 +307,16 @@ export function processAt(scene: Scene, path: NodePath): string | undefined {
  * (`graphTrail`): a step's, a decision's, a gate's or a reservation's own path,
  * either end of a move's arc. So a closed container stands for all of its
  * descendants (D11), a structured node for every one of its invocations, and
- * a branch's arm for only what ran in that arm.
+ * a branch's arm for only what ran in that arm. With `job`, only that job's.
  */
-export function activitiesOn(scene: Scene, root: GraphNode, key: string): number[] {
-  if (key === "") return scene.activities.flatMap((a, i) => (a.kind === "replenishment" ? [] : [i]));
+export function activitiesOn(scene: Scene, root: GraphNode, key: string, job?: string): number[] {
+  if (key === "")
+    return scene.activities.flatMap((a, i) => (a.kind === "replenishment" || (job !== undefined && a.job !== job) ? [] : [i]));
   const through = (path: NodePath, process?: string): boolean =>
     path.length > 0 && graphTrail(root, path, process).some((n) => n.key === key);
   const out: number[] = [];
   scene.activities.forEach((a, i) => {
+    if (job !== undefined && a.job !== job) return;
     switch (a.kind) {
       case "replenishment":
         return;
@@ -323,7 +325,7 @@ export function activitiesOn(scene: Scene, root: GraphNode, key: string): number
         return;
       case "transport":
       case "relay":
-        if (through(a.arc.from.node, processAt(scene, a.arc.from.node)) || through(a.arc.to.node, processAt(scene, a.arc.to.node)))
+        if (through(a.arc.from.node, processAt(scene, a.arc.from.node, a.job)) || through(a.arc.to.node, processAt(scene, a.arc.to.node, a.job)))
           out.push(i);
         return;
       default:
@@ -333,10 +335,10 @@ export function activitiesOn(scene: Scene, root: GraphNode, key: string): number
   return out;
 }
 
-/** `arcRoute` for a move of the plan, with what runs at either end looked up. */
-export function moveRoute(scene: Scene, root: GraphNode, arc: ArcRef): EdgeId[] | undefined {
-  const from = processAt(scene, arc.from.node);
-  const to = processAt(scene, arc.to.node);
+/** `arcRoute` for a move of the plan, with what runs at either end, in its job, looked up. */
+export function moveRoute(scene: Scene, root: GraphNode, arc: ArcRef, job?: string): EdgeId[] | undefined {
+  const from = processAt(scene, arc.from.node, job);
+  const to = processAt(scene, arc.to.node, job);
   return arcRoute(root, arc, { ...(from ? { from } : {}), ...(to ? { to } : {}) });
 }
 

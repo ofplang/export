@@ -10,7 +10,7 @@ as their own subcommands (design.md D49).
 Exit codes (design.md D50):
   0  written (possibly with warnings: parts of the workflow the viewer cannot draw)
   2  bad input: a missing or unreadable file, nothing to draw, a bad option
-  3  refused: a document the viewer does not draw at all (a joint plan); nothing written
+  3  refused: a document the viewer does not draw at all; nothing written (none at present)
 
 Without `-o` the HTML goes to standard output, as `ofp-schedule` does with a
 plan. With `-o` the path written is the one line on standard output, and

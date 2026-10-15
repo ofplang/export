@@ -17,6 +17,11 @@
  *              (design.md §23). Best for reading what happens to one plate.
  *              Only where the Objects can be told apart (`traceObjects`).
  *
+ * In a plan of several jobs (§6.11) the jobs are not told apart by colour —
+ * planned together, they are one plan. `job` narrows any view to one of them
+ * (and the refills, which serve them all); the flow view gives each job its
+ * own lanes.
+ *
  * Pure functions over the scene: no DOM, no colours, no pixels.
  */
 
@@ -85,21 +90,29 @@ export interface GanttLayout {
   readonly bars: readonly Bar[];
 }
 
-export function ganttLayout(scene: Scene, view: GanttView): GanttLayout {
+export function ganttLayout(scene: Scene, view: GanttView, job?: string): GanttLayout {
+  const shown = (a: Activity): boolean => job === undefined || a.job === job || a.kind === "replenishment";
   switch (view) {
     case "device":
-      return deviceLayout(scene);
+      return deviceLayout(scene, shown);
     case "flow":
-      return flowLayout(scene);
+      return flowLayout(scene, shown, job === undefined && scene.jobs.length > 0);
     case "activity":
-      return activityLayout(scene);
+      return activityLayout(scene, shown);
     case "object":
-      return objectLayout(scene);
+      return objectLayout(scene, job);
   }
 }
 
+type Shown = (a: Activity) => boolean;
+
 /** What to call an activity in one short phrase. */
 export function activityLabel(a: Activity): string {
+  const label = kindLabel(a);
+  return a.job === undefined ? label : `${a.job} · ${label}`;
+}
+
+function kindLabel(a: Activity): string {
   switch (a.kind) {
     case "processing":
       return a.node.length ? a.node.join("/") : a.process;
@@ -160,7 +173,7 @@ const NO_MACHINE = "(no device)";
 /** Lane for the decisions, which happen on no machine (§6.14). Only when there are some. */
 const DECISIONS = "(decisions)";
 
-function deviceLayout(scene: Scene): GanttLayout {
+function deviceLayout(scene: Scene, shown: Shown): GanttLayout {
   // Bars are filed by lane id first and numbered at the end, because spot
   // lanes are only known once the activities have been read.
   const filed: (Omit<Bar, "lane"> & { laneId: string })[] = [];
@@ -175,6 +188,7 @@ function deviceLayout(scene: Scene): GanttLayout {
   };
 
   scene.activities.forEach((a, index) => {
+    if (!shown(a)) return;
     const at = (id: string | undefined, style: BarStyle, label: string): void => {
       if (id) filed.push({ laneId: id, index, start: a.start, end: a.end, style, label });
     };
@@ -282,29 +296,32 @@ function groupOf(a: Activity): string {
   return a.node[0] === undefined ? "—" : String(a.node[0]);
 }
 
-function flowLayout(scene: Scene): GanttLayout {
-  const order: string[] = [];
+function flowLayout(scene: Scene, shown: Shown, byJob: boolean): GanttLayout {
+  // Each job its own lanes, in roster order, when every job is on screen.
+  const group = (a: Activity): string => (byJob && a.job !== undefined ? `${a.job} · ${groupOf(a)}` : groupOf(a));
+  const jobRank = (a: Activity): number => (byJob && a.job !== undefined ? scene.jobs.indexOf(a.job) : scene.jobs.length);
+  const order: { id: string; rank: number }[] = [];
   for (const a of scene.activities) {
-    const g = groupOf(a);
-    if (!order.includes(g)) order.push(g);
+    if (!shown(a)) continue;
+    const g = group(a);
+    if (!order.some((o) => o.id === g)) order.push({ id: g, rank: jobRank(a) });
   }
-  const laneOf = new Map(order.map((g, i) => [g, i]));
+  order.sort((x, y) => x.rank - y.rank);
+  const laneOf = new Map(order.map((g, i) => [g.id, i]));
   return {
-    lanes: order.map((g) => ({ id: g, label: g, tag: "" })),
-    bars: scene.activities.map((a, index) => ({
-      lane: laneOf.get(groupOf(a))!,
-      index,
-      start: a.start,
-      end: a.end,
-      style: styleOf(a, scene),
-      label: barLabel(a),
-    })),
+    lanes: order.map((g) => ({ id: g.id, label: g.id, tag: "" })),
+    bars: scene.activities.flatMap((a, index) =>
+      shown(a)
+        ? [{ lane: laneOf.get(group(a))!, index, start: a.start, end: a.end, style: styleOf(a, scene), label: barLabel(a) }]
+        : [],
+    ),
   };
 }
 
-function activityLayout(scene: Scene): GanttLayout {
+function activityLayout(scene: Scene, shown: Shown): GanttLayout {
   const order = scene.activities
     .map((a, index) => ({ a, index }))
+    .filter(({ a }) => shown(a))
     .sort((x, y) => x.a.start - y.a.start || x.index - y.index);
 
   return {
@@ -326,12 +343,13 @@ function activityLayout(scene: Scene): GanttLayout {
  * the view is not offered then (D59), and a lane pieced together would look
  * exactly like a true one.
  */
-function objectLayout(scene: Scene): GanttLayout {
+function objectLayout(scene: Scene, job: string | undefined): GanttLayout {
   const tracing = tracingOf(scene);
   if (!tracing.ok) return { lanes: [], bars: [] };
 
   const bars: Bar[] = [];
-  const lanes = tracing.traces.map((t, lane) => {
+  const traces = tracing.traces.filter((t) => job === undefined || t.job === job);
+  const lanes = traces.map((t, lane) => {
     for (const s of t.segments) {
       const a = s.activity === undefined ? undefined : scene.activities[s.activity];
       bars.push({

@@ -170,29 +170,14 @@ export class UnsupportedError extends ReadError {
 /**
  * Inspect a parsed execution document. Never throws, like `gateWorkflow`.
  *
- * The one thing refused is a joint plan (§6.11, design.md D42): several
- * workflows scheduled together as jobs. Every view here is built on a single
- * workflow — one graph, one node-path namespace, one `meta.workflow` — so a
- * roster is not a field to learn but a different shape of document, and
- * drawing it as one workflow would pair activities with the wrong graph.
- * Any one of the three marks is enough: the roster, a `job` on an activity,
- * or `meta.workflow` given as a list.
+ * Nothing is refused now. A plan of several jobs (§6.11), refused until 0.1.9
+ * (design.md D42), is read; whether its jobs can be drawn against one workflow
+ * graph is decided once the workflow is known (`model/jobs.ts`), and where
+ * they cannot, the plan is drawn on its own. The hook stays for a document
+ * some later viewer cannot read at all.
  */
-export function gateDocument(raw: unknown): Finding[] {
-  if (!isRecord(raw)) return [];
-  const why =
-    "a joint plan schedules several workflows together (§6.11); this viewer draws one workflow at a time";
-  const findings: Finding[] = [];
-  if (raw["jobs"] !== undefined && raw["jobs"] !== null)
-    findings.push({ what: "a joint plan (`jobs`)", at: "jobs", why });
-  const activities = Array.isArray(raw["activities"]) ? raw["activities"] : [];
-  const tagged = activities.findIndex((a) => isRecord(a) && a["job"] !== undefined);
-  if (tagged >= 0)
-    findings.push({ what: "activities tagged with a `job`", at: at(at("activities", tagged), "job"), why });
-  const meta = raw["meta"];
-  if (isRecord(meta) && Array.isArray(meta["workflow"]))
-    findings.push({ what: "more than one workflow in `meta.workflow`", at: "meta.workflow", why });
-  return findings;
+export function gateDocument(_raw: unknown): Finding[] {
+  return [];
 }
 
 /** One line a human can act on, for the banner. */

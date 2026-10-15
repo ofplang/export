@@ -107,14 +107,19 @@ test("text that would end the element early arrives intact", async ({ page }, in
   await expect(page.locator("b", { hasText: "not markup" })).toHaveCount(0);
 });
 
-test("a joint plan is refused here too, with its reason", async ({ page }, info) => {
+test("a plan of several jobs is drawn here too, one job at a time on request", async ({ page }, info) => {
   await openWith(
     page,
     { name: "shared_bay.plan.yaml", plan: example("outputs/shared_bay.plan.yaml") },
     info.outputPath("joint.html"),
   );
-  await expect(page.locator("#banner")).toContainText("§6.11");
-  await expect(page.locator("#plan-empty-title")).toHaveText("Plan not drawn.");
+  await expect(page.locator("#plot rect.bar").first()).toBeVisible();
+  const picker = page.locator("#job");
+  await expect(picker).toBeVisible();
+  await expect(picker.locator("option")).toHaveText(["All jobs (2)", "job1", "job2"]);
+  const all = await page.locator("#plot .bar").count();
+  await picker.selectOption("job2");
+  await expect.poll(() => page.locator("#plot .bar").count()).toBeLessThan(all);
 });
 
 test("a file written by the Python command opens on what it was asked for", async ({ page }, info) => {

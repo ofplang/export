@@ -43,10 +43,11 @@ Also reachable as `ofp export view …` (and `lc export view …` under labcode)
 |---|---|---|
 | 0 | written | hand over the file; mention any warnings printed to stderr |
 | 2 | bad input (missing file, not an ofplang document, nothing to draw, two plans) | fix the arguments; the message says which |
-| 3 | refused — nothing written | tell the person why (stderr): e.g. a **joint plan** (several workflows scheduled together as `jobs`) is not drawn by this viewer |
+| 3 | refused — nothing written | tell the person why (stderr); nothing is refused at present (a plan of several `jobs` is drawn from 0.1.9) |
 
 Warnings (exit 0) mean part of the workflow is shown only as its source
-structure — `$import` not expanded, generics — or that
+structure — `$import` not expanded, generics —, that a plan's jobs run
+different workflows (the plan is then drawn without one), or that
 `--gantt object` was asked for without a workflow, so the page opens on the
 device view. The file is still worth sending; say what is missing.
 

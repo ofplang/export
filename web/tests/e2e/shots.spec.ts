@@ -151,9 +151,19 @@ test("a step resting on a device that stays free (§4.4.2)", async ({ page }) =>
   await shot(page, "storage.selected");
 });
 
-test("a joint plan, dropped, and refused with its reason (D42)", async ({ page }) => {
-  await page.goto("/?doc=plate_batch");
+test("a plan of several jobs, together and one at a time (D75)", async ({ page }) => {
+  await page.goto("/?doc=stopped_job");
   await settle(page);
+  await shot(page, "jobs.device");
+  await page.locator('#views button[data-view="flow"]').click();
+  await shot(page, "jobs.flow");
+  await page.locator("#job").selectOption("job3");
+  await page.waitForTimeout(200);
+  await shot(page, "jobs.flow.job3");
+  await page.locator('#views button[data-view="object"]').click();
+  await page.waitForTimeout(200);
+  await shot(page, "jobs.object.job3");
+  // Dropped on its own, with no workflow to draw it against.
   const text = readFileSync(
     fileURLToPath(new URL("../../../external/ofplang-schedule/examples/outputs/shared_bay.plan.yaml", import.meta.url)),
     "utf8",
@@ -163,8 +173,8 @@ test("a joint plan, dropped, and refused with its reason (D42)", async ({ page }
     dt.items.add(new File([yaml], "shared_bay.plan.yaml"));
     window.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
   }, text);
-  await page.locator("#banner:not([hidden])").waitFor();
-  await shot(page, "gate.joint-plan");
+  await settle(page);
+  await shot(page, "jobs.dropped");
 });
 
 test("Pure Data, and an entry with inputs and outputs (data_flow)", async ({ page }) => {

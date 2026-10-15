@@ -12,7 +12,7 @@
  * selection.
  */
 
-import { arcKey, deviceOf, pathKey, sourcePath, type NodePath } from "./common";
+import { arcKey, deviceOf, jobScoped, pathKey, sourcePath, type NodePath } from "./common";
 import type { Activity, ExecutionDocument, ProcessingActivity } from "./document";
 import type { Environment } from "./environment";
 import type { Workflow } from "./workflow";
@@ -67,9 +67,11 @@ export interface Scene {
   readonly unit: string;
   readonly activities: readonly Activity[];
 
-  /** node path → indices of the processing activities at that exact node. */
+  /** The jobs of a plan of several (§6.11), in roster order; empty for one workflow. */
+  readonly jobs: readonly string[];
+  /** node path (`jobScoped`) → indices of the processing activities at that exact node. */
   readonly byNode: ReadonlyMap<string, readonly number[]>;
-  /** logical arc → indices of its legs and junctions, in travel order. */
+  /** logical arc (`jobScoped`) → indices of its legs and junctions, in travel order. */
   readonly byArc: ReadonlyMap<string, readonly number[]>;
   /** machine id → indices of everything that holds it, or rests on it (§4.4.2). */
   readonly byMachine: ReadonlyMap<string, readonly number[]>;
@@ -117,7 +119,7 @@ export function buildScene(
   activities.forEach((a, i) => {
     switch (a.kind) {
       case "processing":
-        push(byNode, pathKey(a.node), i);
+        push(byNode, jobScoped(a.job, pathKey(a.node)), i);
         // A step that only rests on its devices is still *on* them, so it is
         // indexed there, but it holds none of them (§4.4.2).
         for (const d of holdingDevices(a, env))
@@ -125,14 +127,14 @@ export function buildScene(
           else push(byMachine, d, i);
         break;
       case "transport":
-        push(byArc, arcKey(a.arc), i);
+        push(byArc, jobScoped(a.job, arcKey(a.arc)), i);
         // A transport holds its transporter and both end devices (§4.5).
         hold(a.transporter, i, a);
         hold(deviceOf(a.fromSpot), i, a);
         if (deviceOf(a.toSpot) !== deviceOf(a.fromSpot)) hold(deviceOf(a.toSpot), i, a);
         break;
       case "relay":
-        push(byArc, arcKey(a.arc), i);
+        push(byArc, jobScoped(a.job, arcKey(a.arc)), i);
         break;
       case "replenishment":
         hold(a.device, i, a);
@@ -165,10 +167,14 @@ export function buildScene(
   };
   for (const a of activities) counts[a.kind] += 1;
 
+  const jobs = doc.jobs?.map((j) => j.id) ?? [];
+  for (const a of activities) if (a.job !== undefined && !jobs.includes(a.job)) jobs.push(a.job);
+
   return {
     doc,
     env,
     workflow,
+    jobs,
     unit: doc.time?.unit ?? env?.time?.unit ?? "",
     activities,
     byNode,
@@ -278,17 +284,22 @@ function replayResources(doc: ExecutionDocument, env: Environment | undefined): 
  * step's node, or of either end of a move's arc.
  */
 function assumedWork(activities: readonly Activity[]): Set<number> {
+  // Within its own job: the same path in another job is another region.
   const regions = activities
     .filter((a) => a.kind === "decision" && a.assumed && a.arm !== "exit" && a.arm !== "continue")
-    .map((a) => pathKey((a as { node: NodePath }).node));
+    .map((a) => jobScoped(a.job, pathKey((a as { node: NodePath }).node)));
   const out = new Set<number>();
   if (!regions.length) return out;
-  const under = (p: NodePath): boolean => {
-    const k = pathKey(p);
+  const under = (job: string | undefined, p: NodePath): boolean => {
+    const k = jobScoped(job, pathKey(p));
     return regions.some((r) => k === r || k.startsWith(`${r}.`));
   };
   activities.forEach((a, i) => {
-    if (a.kind === "processing" ? under(a.node) : (a.kind === "transport" || a.kind === "relay") && (under(a.arc.from.node) || under(a.arc.to.node)))
+    if (
+      a.kind === "processing"
+        ? under(a.job, a.node)
+        : (a.kind === "transport" || a.kind === "relay") && (under(a.job, a.arc.from.node) || under(a.job, a.arc.to.node))
+    )
       out.add(i);
   });
   return out;
@@ -382,5 +393,5 @@ export function activitiesUnder(scene: Scene, path: NodePath): number[] {
 export function sameArc(scene: Scene, index: number): number[] {
   const a = scene.activities[index];
   if (!a || (a.kind !== "transport" && a.kind !== "relay")) return [index];
-  return [...(scene.byArc.get(arcKey(a.arc)) ?? [index])];
+  return [...(scene.byArc.get(jobScoped(a.job, arcKey(a.arc))) ?? [index])];
 }

@@ -142,7 +142,9 @@ function sceneFrom(text: string, root: string): Scene {
   const doc = readExecutionDocumentText(text);
   const beside = (rel: string | undefined): string | undefined =>
     rel ? readFileSync(join(root, rel), "utf8") : undefined;
-  const wf = beside(doc.meta?.workflow);
+  // A plan of several jobs names a workflow per job; drawn against one where they are all one (D75).
+  const named = doc.meta?.workflows ? [...new Set(doc.meta.workflows)] : undefined;
+  const wf = beside(named ? (named.length === 1 ? named[0] : undefined) : doc.meta?.workflow);
   const env = beside(doc.meta?.environment);
   return buildScene(doc, env ? readEnvironmentText(env) : undefined, wf ? readWorkflowText(wf) : undefined);
 }

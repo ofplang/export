@@ -24,7 +24,7 @@ it**, to open from disk or send to someone. It is also `ofp export view`
 `lc export view` (`labcode[export]`, from labcode 0.9).
 
 **→ [ofplang.github.io/export](https://ofplang.github.io/export/)**
-— seventeen plans are bundled (two of them curated here: `data_flow`, Pure Data and an entry with inputs and outputs, and `plate_assay`, an assay whose five Objects each meet a different fate); `?doc=plate_assay` opens one directly. Drop your own
+— twenty plans are bundled (two of them curated here: `data_flow`, Pure Data and an entry with inputs and outputs, and `plate_assay`, an assay whose five Objects each meet a different fate); `?doc=plate_assay` opens one directly. Drop your own
 YAML on the window to read that instead: a plan, a workflow, an environment, or
 all three at once. A workflow on its own is fine — the graph does not need a
 plan to be read. Either pane can take the whole window: *Both / Workflow / Plan*
@@ -49,6 +49,12 @@ something says so, and the chart shows it: the moment of each decision, the
 spots kept so the plan holds whichever way it goes, the gate the outcome leaves
 by, and the work that may not happen at all.
 
+A plan of several jobs scheduled together — the same workflow run on different
+material, competing for the same machines — is drawn as one plan against that
+one workflow. A switch above the chart shows one job alone, and the flow view
+gives each job its own lanes. Where the jobs cannot be shown to run the workflow
+given, the plan is drawn on its own and says why.
+
 > **Status: early but usable.** Both panes work and are linked: pick a bar and
 > the workflow box it came from lights up, pick a box and everything under it
 > lights up in the plan, pick an arc and it names the type it carries and the
@@ -70,9 +76,9 @@ ofp-export view <file>... [-o OUT] [--layout split|workflow|plan] [--gantt devic
 - Without `-o` the HTML goes to standard output, as `ofp-schedule` does with a
   plan. With `-o` the path written is printed; `--json` prints a summary instead.
 - Exit codes: **0** written (warnings, if any, on stderr — parts of a workflow
-  the viewer shows only as source structure), **2** bad input, **3** refused
-  and nothing written — a joint plan (several workflows scheduled together as
-  jobs), which this viewer does not draw.
+  the viewer shows only as source structure, or jobs of different workflows,
+  whose plan is drawn on its own), **2** bad input, **3** refused and nothing
+  written (nothing is refused at present; a plan of several jobs was, until 0.1.9).
 
 [`skills/ofp-export/SKILL.md`](skills/ofp-export/SKILL.md) says the same for an
 agent calling the command, as a skill to install where the agent looks for them.
@@ -148,8 +154,8 @@ here are a deliberate, bounded re-implementation of two stable schemas —
 `SPECIFICATIONS.md` §5 (environment) and §6 (execution document) — kept honest
 by the golden test against the pinned submodule's own examples.
 
-Anything outside that subset — `$import`, generics, and joint plans that
-schedule several workflows together as jobs — is refused rather than guessed at.
+Anything outside that subset — `$import`, generics, jobs of different workflows
+in one plan — is left out and said so rather than guessed at.
 
 ## Working on it
 

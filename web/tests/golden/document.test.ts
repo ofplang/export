@@ -15,15 +15,8 @@ import { describe, expect, it } from "vitest";
 
 import { arcKey, deviceOf } from "../../src/model/common";
 import { hasArc } from "../../src/model/document";
-import { readExecutionDocumentText, UnsupportedError } from "../../src/read";
-import {
-  documentFiles,
-  inputDocumentFiles,
-  jointDocumentFiles,
-  jointInputDocumentFiles,
-  read,
-  statusFiles,
-} from "./corpus";
+import { readExecutionDocumentText } from "../../src/read";
+import { documentFiles, inputDocumentFiles, jointDocumentFiles, read, statusFiles } from "./corpus";
 
 const documents = documentFiles;
 
@@ -41,23 +34,21 @@ for (const [dir, name] of [...statusFiles, ...inputDocumentFiles])
     for (const a of d.activities) expect(a.end).toBeGreaterThanOrEqual(a.start);
   });
 
-// A joint plan (§6.11) is refused, and refused *as* a plan with a reason —
-// not read as a single workflow, and not mistaken for some other document
-// (design.md D42). The pin ships some, so the refusal is exercised for real.
-it("the pinned submodule ships joint plans to refuse", () => {
+// A plan of several jobs (§6.11), refused until 0.1.9 (design.md D42), is
+// read: every activity but a refill names a job of the roster, and `meta`
+// names a workflow per job, in roster order (D75).
+it("the pinned submodule ships plans of several jobs", () => {
   expect(jointDocumentFiles.length).toBeGreaterThan(0);
 });
-for (const [dir, name] of [...jointDocumentFiles, ...jointInputDocumentFiles])
-  it(`refuses the joint plan ${name}, naming why`, () => {
-    let caught: unknown;
-    try {
-      readExecutionDocumentText(read(dir, name));
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(UnsupportedError);
-    expect((caught as UnsupportedError).findings.length).toBeGreaterThan(0);
-    expect((caught as UnsupportedError).message).toMatch(/§6\.11/);
+for (const [dir, name] of jointDocumentFiles)
+  it(`reads the plan of several jobs ${name}`, () => {
+    const doc = readExecutionDocumentText(read(dir, name));
+    const roster = (doc.jobs ?? []).map((j) => j.id);
+    expect(roster.length).toBeGreaterThan(1);
+    for (const a of doc.activities)
+      if (a.kind === "replenishment") expect(a.job).toBeUndefined();
+      else expect(roster).toContain(a.job);
+    expect(doc.meta?.workflows?.length).toBe(roster.length);
   });
 
 for (const [dir, name] of documents) describe(name, () => {

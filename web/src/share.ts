@@ -27,6 +27,8 @@ export interface SharePayload {
     readonly layout?: string;
     /** Only when the person set it; otherwise the width decides (D70). */
     readonly details?: "show" | "hide";
+    /** One job of a plan of several, when the person picked one (D75). */
+    readonly job?: string;
   };
 }
 

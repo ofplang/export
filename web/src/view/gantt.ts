@@ -30,6 +30,8 @@ export interface GanttGeometry {
 
 export interface GanttOptions {
   readonly view: GanttView;
+  /** One job of a plan of several, alone; absent for all of them (§6.11). */
+  readonly job?: string;
   /** Plot width in px before zoom. */
   readonly baseWidth: number;
   readonly zoom: number;
@@ -73,7 +75,7 @@ function fit(label: string, room: number): string {
 }
 
 export function renderGantt(scene: Scene, opts: GanttOptions): GanttGeometry {
-  const { lanes, bars } = ganttLayout(scene, opts.view);
+  const { lanes, bars } = ganttLayout(scene, opts.view, opts.job);
   // A four-lane plan stranded at the top of a tall pane looks unfinished. Give
   // the lanes the spare room, up to a point — past that the rows stop reading
   // as one chart.

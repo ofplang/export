@@ -35,18 +35,26 @@ const BLURBS = {
   reroute_stay: "A re-route where the plate stays put, so the relay folds out of the plan.",
   storage: "A plate resting in storage: its spot is held, the device stays free for other work.",
   data_flow: "Pure Data beside a plate: a reading scored on no device, returned as the workflow's output.",
+  shared_bay: "Two jobs of one workflow taking turns at one loading bay.",
+  shared_refill: "Two jobs of one workflow sharing a stock: the refill neither needs alone.",
+  stopped_job: "Three jobs, one of which failed: the others are planned around what it left behind.",
   plate_assay:
     "A plate assay: three sample tubes and a plate of standards onto a fresh plate, which is developed, read and returned; the tubes and the standards are discarded.",
 };
 
-/** A joint plan (§6.11) is refused by the viewer (design.md D42), so it is not
- *  offered in the list either — the same test the reader applies. */
-const isJoint = (plan) =>
-  plan?.jobs != null ||
-  Array.isArray(plan?.meta?.workflow) ||
-  (plan?.activities ?? []).some((a) => a && a.job !== undefined);
+/**
+ * The one workflow a plan's `meta` names: its `workflow`, or — for a plan of
+ * several jobs (§6.11) — the file every job names, where they all name the
+ * same one. Jobs of different workflows are drawn without one (design.md D75),
+ * so none is offered.
+ */
+const metaWorkflow = (plan) => {
+  const w = plan?.meta?.workflow;
+  if (!Array.isArray(w)) return w;
+  const named = [...new Set(w)];
+  return named.length === 1 ? named[0] : undefined;
+};
 
-const skipped = [];
 
 const prettify = (id) =>
   id.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -88,10 +96,6 @@ function collectFrom(dir, origin, roots) {
     const id = replan ? `${name}_replan` : name;
 
     const plan = readYaml(planPath);
-    if (isJoint(plan)) {
-      skipped.push(file);
-      return [];
-    }
 
     const fromMeta = (rel) => {
       if (typeof rel !== "string" || !rel) return undefined;
@@ -102,7 +106,7 @@ function collectFrom(dir, origin, roots) {
       return undefined;
     };
 
-    const workflowPath = fromMeta(plan.meta?.workflow) ?? find(`${name}.workflow.yaml`);
+    const workflowPath = fromMeta(metaWorkflow(plan)) ?? find(`${name}.workflow.yaml`);
     const envPath = fromMeta(plan.meta?.environment) ?? find(`${name}.env.yaml`);
     const dataset = {
       id,
@@ -158,6 +162,5 @@ writeFileSync(join(OUT, "index.json"), JSON.stringify(index, null, 2));
 
 console.log(
   `collect-datasets: ${index.length} datasets -> public/datasets/\n` +
-    index.map((d) => `  ${d.id.padEnd(20)} ${String(d.activities).padStart(3)} activities`).join("\n") +
-    (skipped.length ? `\n  skipped (joint plans, D42): ${skipped.join(", ")}` : ""),
+    index.map((d) => `  ${d.id.padEnd(20)} ${String(d.activities).padStart(3)} activities`).join("\n"),
 );

@@ -57,6 +57,11 @@ export interface Inventories {
 }
 
 interface ActivityBase {
+  /**
+   * The job it belongs to, in a plan of several (§6.11). A refill has none:
+   * the scheduler ran it, for whichever jobs it serves.
+   */
+  readonly job?: string;
   readonly status: ActivityStatus;
   readonly start: number;
   readonly end: number;
@@ -174,9 +179,27 @@ export type ArcActivity = TransportActivity | RelayActivity;
 export const hasArc = (a: Activity): a is ArcActivity =>
   a.kind === "transport" || a.kind === "relay";
 
+/**
+ * §6.11. One job of a plan of several: the order is priority. A job's own
+ * boundary and expansion are on its entry, since the same workflow binds the
+ * same port names for every job.
+ */
+export interface JobEntry {
+  readonly id: string;
+  readonly release?: number;
+  /** The completion it was promised; absent while a decision has just changed its graph, or once it stopped. */
+  readonly bound?: number;
+  /** A digest of the job's expanded workflow (§6.11). */
+  readonly fingerprint?: string;
+  readonly interface?: InterfaceBinding;
+  readonly expansion?: Expansion;
+}
+
 /** §6.1. */
 export interface ExecutionDocument {
   readonly time?: { readonly unit: string };
+  /** §6.11: the roster of a plan of several jobs, in priority order. Absent for one workflow. */
+  readonly jobs?: readonly JobEntry[];
   /** The reference time of a replan (§6.1). Absent on an initial plan. */
   readonly now?: number;
   readonly interface?: InterfaceBinding;
@@ -187,5 +210,9 @@ export interface ExecutionDocument {
   readonly activities: readonly Activity[];
   /** §6.12. Spots a stopped job left held; the plan may not use them. */
   readonly occupied?: readonly { readonly spot: SpotRef; readonly since: number }[];
-  readonly meta?: { readonly workflow?: string; readonly environment?: string };
+  /**
+   * Where the documents came from. A plan of several jobs names a workflow per
+   * job, in roster order (`workflows`); `workflow` is set only where there is one.
+   */
+  readonly meta?: { readonly workflow?: string; readonly workflows?: readonly string[]; readonly environment?: string };
 }

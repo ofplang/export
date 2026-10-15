@@ -24,7 +24,8 @@ import {
 } from "./model/graph";
 import { tracingOf, type ObjectTrace } from "./model/objects";
 import { annotate } from "./model/annotate";
-import { arcKey, type NodePath } from "./model/common";
+import { whyNotOneWorkflow } from "./model/jobs";
+import { arcKey, jobScoped, type NodePath } from "./model/common";
 import { accessesDevices, buildScene, sameArc, type Scene } from "./model/scene";
 import {
   carriesLabel,
@@ -138,6 +139,10 @@ interface State {
   details?: "show" | "hide";
   /** Kept so a share link can carry exactly what was loaded. */
   raw?: { plan: unknown; workflow: unknown; environment: unknown };
+  /** One job of a plan of several, alone (D75). Absent: all of them. */
+  job?: string;
+  /** Why a plan of several jobs is drawn without its workflow (D75). */
+  unlinked?: string;
 }
 
 const state: State = {
@@ -176,7 +181,7 @@ function litActivities(): Set<number> {
     for (const i of movesOn(sel)) out.add(i);
     return out;
   }
-  if (state.graph) for (const i of activitiesOn(scene, state.graph, sel.key)) out.add(i);
+  if (state.graph) for (const i of activitiesOn(scene, state.graph, sel.key, state.job)) out.add(i);
   return out;
 }
 
@@ -244,7 +249,7 @@ function litNodes(): Highlight {
     for (const key of trace.arcs) {
       const a = scene.activities[scene.byArc.get(key)![0]!]!;
       if (a.kind !== "transport" && a.kind !== "relay") continue;
-      for (const e of moveRoute(scene, graph, a.arc) ?? []) edges.add(edgeKey(e));
+      for (const e of moveRoute(scene, graph, a.arc, a.job) ?? []) edges.add(edgeKey(e));
     }
     for (const k of lit) onPath.delete(k);
     return { lit, onPath, edges };
@@ -267,7 +272,7 @@ function activityHighlight(graph: GraphNode, scene: Scene | undefined, index: nu
       activity.kind === "processing"
         ? [[activity.node, activity.process]]
         : activity.kind === "transport" || activity.kind === "relay"
-          ? [activity.arc.from.node, activity.arc.to.node].map((p) => [p, scene ? processAt(scene, p) : undefined])
+          ? [activity.arc.from.node, activity.arc.to.node].map((p) => [p, scene ? processAt(scene, p, activity.job) : undefined])
           : activity.kind === "replenishment"
             ? []
             : [[activity.node, undefined]];
@@ -283,14 +288,14 @@ function activityHighlight(graph: GraphNode, scene: Scene | undefined, index: nu
     // composite open that is several — into its border, then down to the
     // step inside (D61); comparing only the two visible ends found none.
     if (activity.kind === "transport" || activity.kind === "relay") {
-      const route = scene ? moveRoute(scene, graph, activity.arc) : undefined;
+      const route = scene ? moveRoute(scene, graph, activity.arc, activity.job) : undefined;
       if (route) {
         for (const k of lit) onPath.delete(k);
         return { lit, onPath, edges: new Set(route.map(edgeKey)) };
       }
       // Not this workflow's arc: fall back to the two ends as drawn.
-      const fromKey = visibleFor(graph, activity.arc.from.node, state.expanded, scene && processAt(scene, activity.arc.from.node));
-      const toKey = visibleFor(graph, activity.arc.to.node, state.expanded, scene && processAt(scene, activity.arc.to.node));
+      const fromKey = visibleFor(graph, activity.arc.from.node, state.expanded, scene && processAt(scene, activity.arc.from.node, activity.job));
+      const toKey = visibleFor(graph, activity.arc.to.node, state.expanded, scene && processAt(scene, activity.arc.to.node, activity.job));
       if (fromKey !== undefined && toKey !== undefined) {
         for (const k of lit) onPath.delete(k);
         return {
@@ -328,8 +333,9 @@ function movesOn(edge: EdgeRef): number[] {
   const out: number[] = [];
   scene.activities.forEach((a, i) => {
     if (a.kind !== "transport" && a.kind !== "relay") return;
-    const arc = arcKey(a.arc);
-    if (!on.has(arc)) on.set(arc, (moveRoute(scene, graph, a.arc) ?? []).some((e) => edgeKey(e) === key));
+    if (state.job !== undefined && a.job !== state.job) return;
+    const arc = jobScoped(a.job, arcKey(a.arc));
+    if (!on.has(arc)) on.set(arc, (moveRoute(scene, graph, a.arc, a.job) ?? []).some((e) => edgeKey(e) === key));
     if (on.get(arc)) out.push(i);
   });
   return out;
@@ -379,6 +385,10 @@ export async function start(): Promise<void> {
     if (isLayout(shared.ui?.layout)) state.layout = shared.ui.layout;
     if (isDetails(shared.ui?.details)) state.details = shared.ui.details;
     if (shared.ui?.expanded) state.expanded = new Set(shared.ui.expanded);
+    if (typeof shared.ui?.job === "string" && state.scene?.jobs.includes(shared.ui.job)) {
+      state.job = shared.ui.job;
+      buildJobPicker();
+    }
     buildViewButtons();
     markExternal("shared link");
     renderAll();
@@ -513,9 +523,33 @@ function adopt(
   state.zoom = 1;
   state.graphZoom = 1;
   state.expanded = new Set();
-  state.scene = doc ? buildScene(doc, env, workflow) : undefined;
-  state.graph = workflow ? buildGraph(workflow) : undefined;
+  setDocuments(doc, env, workflow);
   state.raw = raw;
+}
+
+/**
+ * The plan and the workflow on screen, joined only where the plan's jobs can
+ * be drawn against that one workflow (D75). A plan of several jobs that
+ * cannot is drawn on its own, and the banner says why; the graph is not
+ * shown, since nothing on it would answer to the plan.
+ */
+function setDocuments(doc: ExecutionDocument | undefined, env: Environment | undefined, workflow: Workflow | undefined): void {
+  state.unlinked = doc && workflow ? whyNotOneWorkflow(doc, workflow) : undefined;
+  const joined = state.unlinked ? undefined : workflow;
+  state.scene = doc ? buildScene(doc, env, joined) : undefined;
+  state.graph = joined ? buildGraph(joined) : doc ? undefined : workflow ? buildGraph(workflow) : undefined;
+  state.job = state.job !== undefined && state.scene?.jobs.includes(state.job) ? state.job : undefined;
+  buildJobPicker();
+}
+
+/** The job switch: all jobs, or one alone. Only for a plan of several. */
+function buildJobPicker(): void {
+  const picker = el<HTMLSelectElement>("job");
+  const jobs = state.scene?.jobs ?? [];
+  picker.hidden = jobs.length === 0;
+  picker.innerHTML =
+    `<option value="">All jobs (${jobs.length})</option>` +
+    jobs.map((j) => `<option value="${escapeHtml(j)}"${j === state.job ? " selected" : ""}>${escapeHtml(j)}</option>`).join("");
 }
 
 /**
@@ -645,7 +679,7 @@ function renderGraphPane(): void {
     ...(arc ? { arc } : {}),
     ...(subtree !== undefined ? { subtree } : {}),
     ...(edges ? { edges } : {}),
-    ...(state.scene ? { notes: annotate(state.scene, graph) } : {}),
+    ...(state.scene ? { notes: annotate(state.scene, graph, state.job) } : {}),
   });
   host.setAttribute("viewBox", g.viewBox);
   host.setAttribute("width", String(Math.round(g.width * state.graphZoom)));
@@ -736,6 +770,7 @@ function renderChart(): void {
 
   const g = renderGantt(scene, {
     view: state.view,
+    ...(state.job !== undefined ? { job: state.job } : {}),
     baseWidth: base,
     zoom: state.zoom,
     lit,
@@ -775,6 +810,14 @@ function renderBanner(): void {
     // the headline, and the list only says where each mark was found.
     showBanner(`This plan was not drawn: ${state.refused[0]!.why}.`, [
       ...state.refused.map((f) => `${escapeHtml(f.what)} at <code>${escapeHtml(f.at)}</code>`),
+      ...(workflowGated ? gate.findings.map(findingLine) : []),
+    ]);
+    return;
+  }
+  if (state.unlinked) {
+    showBanner(`This plan is drawn without its workflow: ${state.unlinked}.`, [
+      "Every job of a plan of several is drawn against one workflow graph, so the graph is shown " +
+        "only where the jobs can be told to run the one given.",
       ...(workflowGated ? gate.findings.map(findingLine) : []),
     ]);
     return;
@@ -925,6 +968,13 @@ function wireControls(): void {
     else document.documentElement.setAttribute("data-theme", value);
   });
 
+  el<HTMLSelectElement>("job").addEventListener("change", (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    state.job = value === "" ? undefined : value;
+    state.selected = undefined;
+    renderAll();
+  });
+
   el("labels").addEventListener("click", (e) => {
     state.labels = !state.labels;
     (e.currentTarget as HTMLElement).setAttribute("aria-pressed", String(state.labels));
@@ -994,6 +1044,7 @@ function wireControls(): void {
           expanded: [...state.expanded],
           ...(state.layout ? { layout: state.layout } : {}),
           ...(state.details ? { details: state.details } : {}),
+          ...(state.job !== undefined ? { job: state.job } : {}),
         },
       },
       flash,
@@ -1206,8 +1257,8 @@ async function acceptFiles(files: readonly File[]): Promise<void> {
   state.selected = undefined;
   state.blurb = accepted.join(", ");
   state.source = files.map((f) => f.name).join("  ·  ");
-  state.scene = doc ? buildScene(doc, env, workflow) : undefined;
-  state.graph = workflow ? buildGraph(workflow) : undefined;
+  state.job = undefined;
+  setDocuments(doc, env, workflow);
   state.expanded = new Set();
   state.raw = { plan: rawPlan, workflow: rawWorkflow, environment: rawEnvironment };
   markExternal(files.length === 1 ? files[0]!.name : `${files.length} dropped files`);

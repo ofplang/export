@@ -10,7 +10,9 @@
  * naive reader gets wrong:
  *   - `transporter` is absent on a same-spot move, and `null` on a route that
  *     needs none (§6.4). A real move with the key missing is malformed.
- *   - A joint plan (`jobs`, §6.11) is refused before anything is read (D42).
+ *   - A plan of several jobs (`jobs`, §6.11) names the job on every activity
+ *     but a refill, and each job's paths are its own workflow's: two jobs of
+ *     one workflow write the same paths.
  *   - Every leg of a multi-hop move carries the *same* logical `arc`; the legs
  *     differ by `seq` and by their physical spots (§6.4).
  *   - A stay-put relay is folded out of the output; its absence is normal (§6.4.1).
@@ -37,6 +39,7 @@ import type {
   GateActivity,
   InterfaceBinding,
   Inventories,
+  JobEntry,
   Objective,
   Outcome,
   ProcessingActivity,
@@ -88,6 +91,7 @@ export function readExecutionDocument(raw: unknown): ExecutionDocument {
   const doc = reqRecord(raw, "");
   const refused = gateDocument(doc);
   if (refused.length) throw new UnsupportedError(refused);
+  const roster = optList(doc["jobs"], "jobs");
 
   const time = optRecord(doc["time"], "time");
   const iface = optRecord(doc["interface"], "interface");
@@ -104,6 +108,7 @@ export function readExecutionDocument(raw: unknown): ExecutionDocument {
   } = { activities };
 
   if (time) out.time = { unit: reqString(time["unit"], "time.unit") };
+  if (roster) out.jobs = roster.map((j, i) => readJob(j, at("jobs", i)));
   const now = optNumber(doc["now"], "now");
   if (now !== undefined) out.now = now;
   if (iface) out.interface = readInterface(iface);
@@ -123,13 +128,31 @@ export function readExecutionDocument(raw: unknown): ExecutionDocument {
       };
     });
   if (meta) {
-    const wf = optString(meta["workflow"], "meta.workflow");
+    const wfs = Array.isArray(meta["workflow"]) ? stringList(meta["workflow"], "meta.workflow") : undefined;
+    const wf = wfs ? undefined : optString(meta["workflow"], "meta.workflow");
     const env = optString(meta["environment"], "meta.environment");
-    const m: { workflow?: string; environment?: string } = {};
+    const m: { workflow?: string; workflows?: string[]; environment?: string } = {};
     if (wf !== undefined) m.workflow = wf;
+    if (wfs) m.workflows = wfs;
     if (env !== undefined) m.environment = env;
     out.meta = m;
   }
+  return out;
+}
+
+function readJob(raw: unknown, path: string): JobEntry {
+  const j = reqRecord(raw, path);
+  const out: { -readonly [K in keyof JobEntry]: JobEntry[K] } = { id: reqString(j["id"], at(path, "id")) };
+  const release = optNumber(j["release"], at(path, "release"));
+  if (release !== undefined) out.release = release;
+  const bound = optNumber(j["bound"], at(path, "bound"));
+  if (bound !== undefined) out.bound = bound;
+  const fingerprint = optString(j["fingerprint"], at(path, "fingerprint"));
+  if (fingerprint !== undefined) out.fingerprint = fingerprint;
+  const iface = optRecord(j["interface"], at(path, "interface"));
+  if (iface) out.interface = readInterface(iface, at(path, "interface"));
+  const expansion = optRecord(j["expansion"], at(path, "expansion"));
+  if (expansion) out.expansion = readExpansion(expansion, at(path, "expansion"));
   return out;
 }
 
@@ -153,12 +176,12 @@ function readObjective(o: Record<string, unknown>): Objective {
   return { kind, value };
 }
 
-function readInterface(i: Record<string, unknown>): InterfaceBinding {
+function readInterface(i: Record<string, unknown>, where = "interface"): InterfaceBinding {
   const side = (key: "inputs" | "outputs"): Record<string, SpotTree> | undefined => {
-    const src = optRecord(i[key], at("interface", key));
+    const src = optRecord(i[key], at(where, key));
     if (!src) return undefined;
     const out: Record<string, SpotTree> = {};
-    for (const [port, spots] of Object.entries(src)) out[port] = readSpotTree(spots, at(at("interface", key), port));
+    for (const [port, spots] of Object.entries(src)) out[port] = readSpotTree(spots, at(at(where, key), port));
     return out;
   };
   const inputs = side("inputs") ?? {};
@@ -187,7 +210,9 @@ function readActivity(raw: unknown, path: string): Activity {
   if (end < start)
     throw new ReadError(path, `end (${end}) is before start (${start})`);
 
-  const base = { status, start, end } as const;
+  // §6.11: a refill has no job; every other activity of a plan of several has one.
+  const job = kind === "replenishment" ? undefined : optString(a["job"], at(path, "job"));
+  const base = job === undefined ? ({ status, start, end } as const) : ({ job, status, start, end } as const);
 
   switch (kind) {
     case "processing":
@@ -250,11 +275,11 @@ function readReservation(a: Record<string, unknown>, path: string, base: Base): 
   return { ...base, kind: "reservation", node, spots };
 }
 
-function readExpansion(e: Record<string, unknown>): Expansion {
+function readExpansion(e: Record<string, unknown>, where = "expansion"): Expansion {
   const list = (key: string): Record<string, unknown>[] =>
-    (optList(e[key], at("expansion", key)) ?? []).map((x, i) => reqRecord(x, at(at("expansion", key), i)));
+    (optList(e[key], at(where, key)) ?? []).map((x, i) => reqRecord(x, at(at(where, key), i)));
   const lengths = list("lengths").map((x, i) => {
-    const p = at(at("expansion", "lengths"), i);
+    const p = at(at(where, "lengths"), i);
     const index = readIndex(x["index"], at(p, "index"));
     return {
       node: readNodePath(x["node"], at(p, "node")),
@@ -264,11 +289,11 @@ function readExpansion(e: Record<string, unknown>): Expansion {
     };
   });
   const arms = list("arms").map((x, i) => {
-    const p = at(at("expansion", "arms"), i);
+    const p = at(at(where, "arms"), i);
     return { node: readNodePath(x["node"], at(p, "node")), arm: oneOf(x["arm"], at(p, "arm"), BRANCH_ARMS) };
   });
   const loops = list("loops").map((x, i) => {
-    const p = at(at("expansion", "loops"), i);
+    const p = at(at(where, "loops"), i);
     const ended = optBoolean(x["ended"], at(p, "ended"));
     if (ended === undefined) throw new ReadError(at(p, "ended"), "a loop's entry says whether it has ended (§6.13)");
     return { node: readNodePath(x["node"], at(p, "node")), count: reqNumber(x["count"], at(p, "count")), ended };
@@ -282,7 +307,7 @@ function readSpotTree(raw: unknown, path: string): SpotTree {
   return reqString(raw, path);
 }
 
-type Base = { readonly status: ActivityStatus; readonly start: number; readonly end: number };
+type Base = { readonly job?: string; readonly status: ActivityStatus; readonly start: number; readonly end: number };
 
 function readProcessing(
   a: Record<string, unknown>,

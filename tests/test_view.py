@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ofplang.export.cli import EXIT_INPUT, EXIT_OK, EXIT_REFUSED, main
+from ofplang.export.cli import EXIT_INPUT, EXIT_OK, main
 from ofplang.export.template import CONTRACT, TemplateError, embed, encode
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -280,16 +280,31 @@ def test_a_template_without_the_element_or_of_another_contract_is_refused():
 
 
 @pytest.mark.parametrize("plan", ["shared_bay.plan.yaml", "shared_refill.plan.yaml", "stopped_job.plan.yaml"])
-def test_a_joint_plan_is_refused_and_nothing_is_written(tmp_path, template, capsys, plan):
+def test_a_plan_of_several_jobs_is_written_with_the_workflow_they_all_run(tmp_path, template, capsys, plan):
+    # Refused until 0.1.9 (design.md D42); drawn now, against the one workflow
+    # every job's `meta` names (D75).
     out = tmp_path / "j.html"
     code, stdout, err = run(
         capsys, str(OUTPUTS / plan), "-o", str(out), "--template", str(template), "--json"
     )
-    assert code == EXIT_REFUSED
-    assert not out.exists()
-    assert "section 6.11" in err
+    assert code == EXIT_OK and out.exists()
     summary = json.loads(stdout)
-    assert summary["written"] is None and summary["refused"]
+    assert summary["documents"]["workflow"] is not None
+    assert summary["warnings"] == []
+
+
+def test_jobs_of_different_workflows_are_written_with_a_warning(tmp_path, template, capsys):
+    text = (OUTPUTS / "shared_refill.plan.yaml").read_text(encoding="utf-8")
+    plan = tmp_path / "apart.plan.yaml"
+    plan.write_text(
+        text.replace("- examples/shared_refill.workflow.yaml\n", "- examples/simple.workflow.yaml\n", 1),
+        encoding="utf-8",
+    )
+    out = tmp_path / "apart.html"
+    code, stdout, err = run(capsys, str(plan), "-o", str(out), "--template", str(template), "--json")
+    assert code == EXIT_OK and out.exists()
+    assert "different workflows" in err
+    assert json.loads(stdout)["documents"]["workflow"] is None
 
 
 def test_a_workflow_drawn_only_in_part_is_written_with_a_warning(tmp_path, template, capsys):

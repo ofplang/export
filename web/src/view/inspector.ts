@@ -1,7 +1,7 @@
 /** The right-hand panel: the plan at a glance, or the selected activity. */
 
-import { arcKey, pathKey, pathText, type NodePath, type PortRef } from "../model/common";
-import type { SpotTree } from "../model/document";
+import { arcKey, jobScoped, pathKey, pathText, type NodePath, type PortRef } from "../model/common";
+import type { Expansion, InterfaceBinding, SpotTree } from "../model/document";
 import { annotate } from "../model/annotate";
 import { activitiesOn, findNode, type GraphNode } from "../model/graph";
 import { tracingOf, type ObjectTrace, type SegmentKind } from "../model/objects";
@@ -92,24 +92,51 @@ function overview(scene: Scene, blurb: string): string {
     );
   }
 
-  if (doc.interface) {
-    const rows = [
-      ...Object.entries(doc.interface.inputs).map(([p, s]) => [`in · ${p}`, spotTreeText(s)] as const),
-      ...Object.entries(doc.interface.outputs ?? {}).map(([p, s]) => [`out · ${p}`, spotTreeText(s)] as const),
-    ];
-    if (rows.length)
-      out.push(block("Boundary", dl(rows) + `<div class="note" style="margin-top:8px">Where the workflow's own material starts and ends up.</div>`));
+  // §6.11: the roster, in priority order. A job is said to have stopped only
+  // where something of it failed or was cancelled — a missing `bound` alone
+  // also means a decision has just changed its graph.
+  if (doc.jobs?.length) {
+    const rows = doc.jobs.map((j) => {
+      const stopped = scene.activities.some((a) => a.job === j.id && (a.status === "failed" || a.status === "cancelled"));
+      const said = [
+        j.release ? `released at ${formatDuration(j.release, unit)}` : "",
+        j.bound !== undefined ? `promised by ${formatDuration(j.bound, unit)}` : "",
+        stopped ? "stopped" : "",
+      ].filter(Boolean);
+      return [j.id, said.join(" · ") || "—"] as const;
+    });
+    out.push(
+      block(
+        "Jobs",
+        dl(rows) +
+          `<div class="note" style="margin-top:8px">Planned together, in priority order (§6.11); each runs ` +
+          `the workflow on its own material. The job switch above the chart shows one alone.</div>`,
+      ),
+    );
   }
+
+  // Each job's boundary is its own (§6.11); a plan of one has one at the top.
+  const boundary = (iface: InterfaceBinding | undefined, who: string): (readonly [string, unknown])[] => [
+    ...Object.entries(iface?.inputs ?? {}).map(([p, s]) => [`${who}in · ${p}`, spotTreeText(s)] as const),
+    ...Object.entries(iface?.outputs ?? {}).map(([p, s]) => [`${who}out · ${p}`, spotTreeText(s)] as const),
+  ];
+  const sides = [boundary(doc.interface, ""), ...(doc.jobs ?? []).map((j) => boundary(j.interface, `${j.id} `))].flat();
+  if (sides.length)
+    out.push(block("Boundary", dl(sides) + `<div class="note" style="margin-top:8px">Where the workflow's own material starts and ends up.</div>`));
 
   // What the run has said about the expansion (§6.13): the rest of the plan
   // stands on assumptions, which its decisions name (§6.14).
-  const ex = doc.expansion;
-  if (ex && (ex.arms.length || ex.loops.length || ex.lengths.length)) {
-    const rows: (readonly [string, unknown])[] = [
-      ...ex.arms.map((x) => [pathText(x.node), `arm ${x.arm}`] as const),
-      ...ex.loops.map((x) => [pathText(x.node), `${x.count} invocation${x.count === 1 ? "" : "s"}${x.ended ? ", ended" : ", going on"}`] as const),
-      ...ex.lengths.map((x) => [`${x.node.length ? pathText(x.node) : "inputs"}.${x.port}${x.index ? `[${x.index.join(",")}]` : ""}`, `${x.length} long`] as const),
-    ];
+  const stated = (ex: Expansion | undefined, who: string): (readonly [string, unknown])[] =>
+    ex
+      ? [
+          ...ex.arms.map((x) => [`${who}${pathText(x.node)}`, `arm ${x.arm}`] as const),
+          ...ex.loops.map((x) => [`${who}${pathText(x.node)}`, `${x.count} invocation${x.count === 1 ? "" : "s"}${x.ended ? ", ended" : ", going on"}`] as const),
+          ...ex.lengths.map((x) => [`${who}${x.node.length ? pathText(x.node) : "inputs"}.${x.port}${x.index ? `[${x.index.join(",")}]` : ""}`, `${x.length} long`] as const),
+        ]
+      : [];
+  const decided = [stated(doc.expansion, ""), ...(doc.jobs ?? []).map((j) => stated(j.expansion, `${j.id} · `))].flat();
+  if (decided.length) {
+    const rows = decided;
     out.push(
       block(
         "Decided",
@@ -174,6 +201,7 @@ function detail(scene: Scene, index: number): string {
     ["duration", formatDuration(a.end - a.start, unit)],
   ];
   if (a.status !== "pending") timing.push(["status", a.status]);
+  if (a.job !== undefined) timing.push(["job", a.job]);
   out.push(block("Timing", dl(timing)));
 
   switch (a.kind) {
@@ -267,7 +295,7 @@ function detail(scene: Scene, index: number): string {
 
   if (a.kind === "transport" || a.kind === "relay") {
     const end = (e: PortRef): string => (e.node.length ? portText(e) : `⟨interface⟩ . ${e.port}${indexText(e.index)}`);
-    const legs = scene.byArc.get(arcKey(a.arc)) ?? [];
+    const legs = scene.byArc.get(jobScoped(a.job, arcKey(a.arc))) ?? [];
     out.push(
       block(
         "Object arc",

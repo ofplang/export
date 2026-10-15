@@ -110,6 +110,11 @@ def collect(paths: list[Path], *, follow: bool = True) -> DocumentSet:
         if isinstance(meta, dict):
             for kind in ("workflow", "environment"):
                 ref = meta.get(kind)
+                # A plan of several jobs names a workflow per job (SPECIFICATIONS
+                # section 6.11); it is followed where every job names the same one.
+                if isinstance(ref, list):
+                    named = {r for r in ref if isinstance(r, str)}
+                    ref = named.pop() if len(named) == 1 else None
                 if docs.get(kind) is None and isinstance(ref, str) and ref:
                     found = resolve(ref, docs.plan.path)
                     if found is not None:
@@ -138,37 +143,43 @@ def resolve(ref: str, plan: Path) -> Path | None:
     return None
 
 
-JOINT_WHY = (
-    "a joint plan schedules several workflows together (SPECIFICATIONS section 6.11); "
-    "this viewer draws one workflow at a time"
-)
-
-
 def refusals(docs: DocumentSet) -> list[Finding]:
-    """Why the page would refuse the plan outright — design.md D42."""
+    """Why the page would refuse the plan outright.
+
+    Nothing at present: a plan of several jobs, refused until 0.1.9 (design.md
+    D42), is drawn (D75). The hook stays for a document a later page cannot read.
+    """
+    return []
+
+
+def _jobs_apart(docs: DocumentSet) -> list[Finding]:
+    """A plan of several jobs whose `meta` names different workflows (D75)."""
     if docs.plan is None:
         return []
-    raw = docs.plan.data
-    out: list[Finding] = []
-    if raw.get("jobs") is not None:
-        out.append(Finding("a joint plan (`jobs`)", "jobs", JOINT_WHY))
-    for i, a in enumerate(raw.get("activities") or []):
-        if isinstance(a, dict) and "job" in a:
-            out.append(Finding("activities tagged with a `job`", f"activities[{i}].job", JOINT_WHY))
-            break
-    meta = raw.get("meta")
-    if isinstance(meta, dict) and isinstance(meta.get("workflow"), list):
-        out.append(Finding("more than one workflow in `meta.workflow`", "meta.workflow", JOINT_WHY))
-    return out
+    meta = docs.plan.data.get("meta")
+    named = meta.get("workflow") if isinstance(meta, dict) else None
+    if not isinstance(named, list):
+        return []
+    different = sorted({w for w in named if isinstance(w, str) and w != "<in-memory>"})
+    if len(different) < 2:
+        return []
+    return [
+        Finding(
+            f"jobs of {len(different)} different workflows",
+            "meta.workflow",
+            "the plan is drawn on its own: its jobs are drawn against one workflow graph "
+            "only where they all run it",
+        )
+    ]
 
 
 _NODE_KINDS = {"map": "node_map", "fold": "node_fold", "do_while": "node_do_while", "branch": "node_branch"}
 
 
 def warnings(docs: DocumentSet) -> list[Finding]:
-    """What the page would draw only in part — design.md D10."""
+    """What the page would draw only in part — design.md D10, D75."""
     if docs.workflow is None:
-        return []
+        return _jobs_apart(docs)
     raw = docs.workflow.data
     out = [
         Finding(
@@ -178,6 +189,7 @@ def warnings(docs: DocumentSet) -> list[Finding]:
         )
         for at in _imports(raw, "")
     ]
+    out.extend(_jobs_apart(docs))
     processes = raw.get("processes")
     for name, d in processes.items() if isinstance(processes, dict) else []:
         if not isinstance(d, dict):

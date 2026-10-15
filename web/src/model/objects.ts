@@ -20,6 +20,7 @@
 import {
   isBoundary,
   isGatePath,
+  jobScoped,
   pathKey,
   pathText,
   portRefKey,
@@ -119,18 +120,21 @@ export interface Segment {
   readonly activity?: number;
 }
 
+/** Where an Object appears — in its job, in a plan of several (§6.11). */
 export type Origin =
-  | { readonly kind: "create"; readonly node: NodePath; readonly port: string }
-  | { readonly kind: "input"; readonly port: string; readonly index?: readonly number[] };
+  | { readonly kind: "create"; readonly node: NodePath; readonly port: string; readonly job?: string }
+  | { readonly kind: "input"; readonly port: string; readonly index?: readonly number[]; readonly job?: string };
 
 export type Fate =
   | { readonly kind: "consume"; readonly node: NodePath; readonly port: string }
   | { readonly kind: "output"; readonly port: string; readonly index?: readonly number[] };
 
 export interface ObjectTrace {
-  /** Stable within a plan: where the Object came from. */
+  /** Stable within a plan: where the Object came from, and in which job. */
   readonly id: string;
-  /** Where it appears: `PrepA.plate`, or `inputs.sample` for an entry input. */
+  /** The job it belongs to, in a plan of several. */
+  readonly job?: string;
+  /** Where it appears: `PrepA.plate`, or `inputs.sample` for an entry input; `job1 · …` in a plan of several. */
   readonly where: string;
   /** Type and origin, e.g. `Plate · PrepA.plate` (design.md D58). */
   readonly label: string;
@@ -179,7 +183,9 @@ export function tracingOf(scene: Scene): ObjectTracing {
 /**
  * Follow every Object of a plan from where it appears to where it ends.
  *
- * One workflow per plan (design.md D42): arcs are keyed without a job.
+ * In a plan of several jobs (§6.11) every job runs the workflow on its own
+ * Objects, and two jobs write the same paths: every key here is within a job
+ * (`jobScoped`), and an Object never passes from one job to another.
  */
 export function traceObjects(scene: Scene): ObjectTracing {
   const wf = scene.workflow;
@@ -201,7 +207,7 @@ export function traceObjects(scene: Scene): ObjectTracing {
 }
 
 class Tracer {
-  private readonly arcs = new Map<string, { arc: ArcRef; legs: readonly number[] }>();
+  private readonly arcs = new Map<string, { arc: ArcRef; legs: readonly number[]; job: string | undefined }>();
   private readonly arcFrom = new Map<string, string>();
   private readonly arcTo = new Map<string, string>();
   private readonly visited = new Set<string>();
@@ -215,20 +221,20 @@ class Tracer {
   ) {
     this.horizon = scene.metrics.horizon;
     scene.activities.forEach((a, i) => {
-      if (a.kind === "gate") this.gates.set(pathKey(a.node), i);
+      if (a.kind === "gate") this.gates.set(jobScoped(a.job, pathKey(a.node)), i);
     });
     for (const [key, legs] of scene.byArc) {
       const first = scene.activities[legs[0]!];
       if (!first || !("arc" in first)) continue;
       const arc = first.arc;
-      this.arcs.set(key, { arc, legs });
+      this.arcs.set(key, { arc, legs, job: first.job });
       // An Object is at one place at a time, so a port has at most one move
       // out and one move in. An entry input's key is its bare port (`|name`).
       for (const [index, end] of [
         [this.arcFrom, arc.from],
         [this.arcTo, arc.to],
       ] as const) {
-        const k = portKey(end);
+        const k = jobScoped(first.job, portKey(end));
         if (index.has(k)) throw new Untraceable(`two moves leave or reach ${portName(end.node, end.port)}`);
         index.set(k, key);
       }
@@ -245,18 +251,23 @@ class Tracer {
       const def = this.atomicOf(step);
       for (const path of objectsOf(def, this.wf).create ?? []) {
         const port = path.slice("outputs.".length);
-        traces.push(this.follow({ kind: "create", node: step.node, port }, def.outputs[port]?.type ?? "", i));
+        const origin: Origin =
+          step.job === undefined ? { kind: "create", node: step.node, port } : { kind: "create", node: step.node, port, job: step.job };
+        traces.push(this.follow(origin, def.outputs[port]?.type ?? "", i));
       }
     }
     // Born outside it: every entry input, which arrives by a boundary arc —
     // one per element of an Array, the arc naming the element (§6.4).
-    for (const { arc } of this.arcs.values())
+    for (const { arc, job } of this.arcs.values())
       if (isBoundary(arc.from)) {
         const entry = this.wf.processes[this.wf.entry];
         const type = elementType(entry?.inputs[arc.from.port]?.type ?? "", arc.from.index?.length ?? 0);
-        const origin: Origin = arc.from.index
-          ? { kind: "input", port: arc.from.port, index: arc.from.index }
-          : { kind: "input", port: arc.from.port };
+        const origin: Origin = {
+          kind: "input",
+          port: arc.from.port,
+          ...(arc.from.index ? { index: arc.from.index } : {}),
+          ...(job !== undefined ? { job } : {}),
+        };
         traces.push(this.follow(origin, type));
       }
 
@@ -265,7 +276,7 @@ class Tracer {
     for (const [key, list] of this.scene.byNode) {
       const step = this.scene.activities[this.onlyStep(key, list)] as ProcessingActivity;
       for (const [port, d] of Object.entries(this.atomicOf(step).inputs))
-        if (carriesObject(d.type, this.wf) && !this.arcTo.has(portKey({ node: step.node, port })))
+        if (carriesObject(d.type, this.wf) && !this.arcTo.has(jobScoped(step.job, portKey({ node: step.node, port }))))
           throw new Untraceable(`${portName(step.node, port)}: the plan brings no Object to it`);
     }
     // Checked second: a move no Object reaches is usually the symptom of the above.
@@ -280,8 +291,11 @@ class Tracer {
   private follow(origin: Origin, type: string, birth?: number): ObjectTrace {
     const segments: Segment[] = [];
     const arcs: string[] = [];
-    const where = origin.kind === "create" ? portName(origin.node, origin.port) : portName([], origin.port, origin.index);
-    const id = origin.kind === "create" ? `create:${where}` : `input:${origin.port}${indexText(origin.index)}`;
+    const job = origin.job;
+    const own = (k: string): string => jobScoped(job, k);
+    const bare = origin.kind === "create" ? portName(origin.node, origin.port) : portName([], origin.port, origin.index);
+    const where = job === undefined ? bare : `${job} · ${bare}`;
+    const id = own(origin.kind === "create" ? `create:${bare}` : `input:${origin.port}${indexText(origin.index)}`);
 
     const push = (s: Segment): void => {
       const last = segments[segments.length - 1];
@@ -308,7 +322,7 @@ class Tracer {
     }
 
     for (;;) {
-      const key = this.arcFrom.get(portKey(at));
+      const key = this.arcFrom.get(own(portKey(at)));
       // A valid workflow discards no Object (workflow spec §13), so every
       // Object output goes somewhere; a plan without the move is missing it.
       if (!key) throw new Untraceable(`${portName(at.node, at.port, at.index)}: the plan moves it nowhere`);
@@ -344,7 +358,7 @@ class Tracer {
       if (isGatePath(arc.to.node)) {
         // Into a gate, and out of it the same Object: a gate passes on what
         // it is given (§6.15). It waits there on the gate's spot.
-        const g = this.gates.get(pathKey(arc.to.node));
+        const g = this.gates.get(own(pathKey(arc.to.node)));
         if (g === undefined) throw new Untraceable(`${pathText(arc.to.node)}: the plan has no such gate`);
         const gate = this.scene.activities[g]!;
         const spot = gate.kind === "gate" ? gate.spot : undefined;
@@ -353,7 +367,7 @@ class Tracer {
         continue;
       }
 
-      const nodeKey = pathKey(arc.to.node);
+      const nodeKey = own(pathKey(arc.to.node));
       const i = this.onlyStep(nodeKey, this.scene.byNode.get(nodeKey));
       const a = this.scene.activities[i] as ProcessingActivity;
       const o = objectsOf(this.atomicOf(a), this.wf);
@@ -391,7 +405,8 @@ class Tracer {
     arcs: string[],
   ): ObjectTrace {
     const activities = segments.flatMap((s) => (s.activity === undefined ? [] : [s.activity]));
-    return { id, where, label: type ? `${type} · ${where}` : where, type, origin, fate, segments, arcs, activities };
+    const label = type ? `${type} · ${where}` : where;
+    return { id, ...(origin.job !== undefined ? { job: origin.job } : {}), where, label, type, origin, fate, segments, arcs, activities };
   }
 
   private onlyStep(key: string, list: readonly number[] | undefined): number {

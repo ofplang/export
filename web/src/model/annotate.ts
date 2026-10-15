@@ -10,9 +10,12 @@
  * writes in a path; an arm is the one `expansion.arms` states, the one an
  * assumed decision names, or the one the steps that ran there are in. A branch
  * invocation none of those tells is counted for no arm.
+ *
+ * In a plan of several jobs each job's invocations are its own, and the counts
+ * are summed — or, with `job`, that job's alone.
  */
 
-import { pathKey, sourcePath, type NodePath } from "./common";
+import { jobScoped, pathKey, sourcePath, type NodePath } from "./common";
 import { graphTrail, processAt, type GraphNode } from "./graph";
 import type { Scene } from "./scene";
 
@@ -38,16 +41,22 @@ function invocationOf(path: NodePath, depth: number): NodePath | undefined {
   return undefined;
 }
 
-export function annotate(scene: Scene, root: GraphNode): Map<string, BoxNote> {
+export function annotate(scene: Scene, root: GraphNode, job?: string): Map<string, BoxNote> {
   const out = new Map<string, BoxNote>();
-  // Every path the plan writes, with what runs there.
-  const paths: [NodePath, string | undefined][] = [];
+  // Every path the plan writes, with what runs there, and in which job.
+  const paths: [NodePath, string | undefined, string | undefined][] = [];
   for (const a of scene.activities) {
-    if (a.kind === "processing") paths.push([a.node, a.process]);
+    if (job !== undefined && a.job !== job) continue;
+    if (a.kind === "processing") paths.push([a.node, a.process, a.job]);
     else if (a.kind === "transport" || a.kind === "relay") {
-      for (const end of [a.arc.from.node, a.arc.to.node]) if (end.length) paths.push([end, processAt(scene, end)]);
-    } else if (a.kind !== "replenishment") paths.push([a.node, undefined]);
+      for (const end of [a.arc.from.node, a.arc.to.node]) if (end.length) paths.push([end, processAt(scene, end, a.job), a.job]);
+    } else if (a.kind !== "replenishment") paths.push([a.node, undefined, a.job]);
   }
+  // What the run has stated, for the whole plan or for each job (§6.11).
+  const stated: [string | undefined, { node: NodePath; arm: "then" | "else" }][] = [
+    ...(scene.doc.expansion?.arms ?? []).map((x) => [undefined, x] as [undefined, typeof x]),
+    ...(scene.doc.jobs ?? []).flatMap((j) => (j.expansion?.arms ?? []).map((x) => [j.id, x] as [string, typeof x])),
+  ];
 
   const visit = (n: GraphNode): void => {
     n.children.forEach(visit);
@@ -55,10 +64,10 @@ export function annotate(scene: Scene, root: GraphNode): Map<string, BoxNote> {
     const depth = sourcePath(n.path).filter((s) => !s.startsWith("@")).length;
     if (n.structure === "map" || n.structure === "fold" || n.structure === "do_while") {
       const seen = new Set<string>();
-      for (const [p, process] of paths) {
+      for (const [p, process, j] of paths) {
         if (!graphTrail(root, p, process).some((g) => g.key === n.key)) continue;
         const inv = invocationOf(p, depth);
-        if (inv && typeof inv[inv.length - 1] === "number") seen.add(pathKey(inv));
+        if (inv && typeof inv[inv.length - 1] === "number") seen.add(jobScoped(j, pathKey(inv)));
       }
       out.set(n.key, { invocations: seen.size });
     }
@@ -66,19 +75,25 @@ export function annotate(scene: Scene, root: GraphNode): Map<string, BoxNote> {
 
     // One entry per invocation of the branch: the arm, and whether it is stated.
     const arms = new Map<string, { arm: string; stated: boolean }>();
-    for (const x of scene.doc.expansion?.arms ?? []) arms.set(pathKey(x.node), { arm: x.arm, stated: true });
-    for (const a of scene.activities)
-      if (a.kind === "decision" && (a.arm === "then" || a.arm === "else") && pathKey(sourcePath(a.node)) === pathKey(sourcePath(n.path)))
-        if (!arms.has(pathKey(a.node)) || !a.assumed) arms.set(pathKey(a.node), { arm: a.arm, stated: !a.assumed });
-    for (const [p, process] of paths) {
+    const here = pathKey(sourcePath(n.path));
+    for (const [j, x] of stated)
+      if ((job === undefined || j === job) && pathKey(sourcePath(x.node)) === here)
+        arms.set(jobScoped(j, pathKey(x.node)), { arm: x.arm, stated: true });
+    for (const a of scene.activities) {
+      if (a.kind !== "decision" || (job !== undefined && a.job !== job)) continue;
+      const k = jobScoped(a.job, pathKey(a.node));
+      if ((a.arm === "then" || a.arm === "else") && pathKey(sourcePath(a.node)) === here)
+        if (!arms.has(k) || !a.assumed) arms.set(k, { arm: a.arm, stated: !a.assumed });
+    }
+    for (const [p, process, j] of paths) {
       const trail = graphTrail(root, p, process);
       const at = trail.findIndex((g) => g.key === n.key);
       const arm = at >= 0 ? trail[at + 1] : undefined;
       const inv = invocationOf(p, depth);
-      if (!arm?.arm || !inv || arms.has(pathKey(inv))) continue;
+      if (!arm?.arm || !inv || arms.has(jobScoped(j, pathKey(inv)))) continue;
       // Ran there with nothing stated or assumed: a literal condition the
       // scheduler read itself, or a stated arm whose decision has passed.
-      arms.set(pathKey(inv), { arm: arm.arm, stated: true });
+      arms.set(jobScoped(j, pathKey(inv)), { arm: arm.arm, stated: true });
     }
     for (const arm of n.children) {
       if (!arm.arm) continue;

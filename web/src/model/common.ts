@@ -99,5 +99,13 @@ export const isBoundary = (e: PortRef): boolean => e.node.length === 0;
 export const portRefKey = (e: PortRef): string =>
   `${pathKey(e.node)}|${e.port}${e.index ? `[${e.index.join(",")}]` : ""}`;
 
+/**
+ * A key within one job (§6.11). Two jobs of one workflow write the same paths
+ * and the same arcs, so in a plan of several every index key carries its job;
+ * in a plan of one there is none, and the key is as it always was. `:` occurs
+ * in no identifier (§8.1).
+ */
+export const jobScoped = (job: string | undefined, key: string): string => (job === undefined ? key : `${job}:${key}`);
+
 /** Stable key for an arc, so every leg of a multi-hop move shares one key. */
 export const arcKey = (a: ArcRef): string => `${portRefKey(a.from)}>${portRefKey(a.to)}`;

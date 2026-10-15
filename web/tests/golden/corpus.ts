@@ -13,8 +13,6 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import { gateDocument } from "../../src/read";
-
 const root = (rel: string): string =>
   fileURLToPath(new URL(`../../../external/ofplang-schedule/${rel}`, import.meta.url));
 
@@ -30,14 +28,9 @@ export const read = (dir: string, name: string): string => readFileSync(join(dir
 
 type Entry = readonly [string, string];
 
-/** Joint plans (§6.11) are refused by the viewer (design.md D42). They are
- *  split off here, by the reader's own test, so every other file keeps meaning
- *  "a document the viewer draws" and the refusal is tested on its own. */
-const isJoint = ([dir, f]: Entry): boolean => gateDocument(parse(read(dir, f))).length > 0;
-const split = (files: Entry[]): [Entry[], Entry[]] => [
-  files.filter((e) => !isJoint(e)),
-  files.filter(isJoint),
-];
+/** Plans of several jobs (§6.11): read and drawn like any other (design.md
+ *  D75), and also listed on their own, for what only they have. */
+const isJoint = ([dir, f]: Entry): boolean => (parse(read(dir, f)) as { jobs?: unknown } | null)?.jobs != null;
 
 const allDocuments: Entry[] = [
   ...listing(OUTPUTS, ".plan.yaml").map((f) => [OUTPUTS, f] as const),
@@ -51,11 +44,12 @@ const allInputDocuments: Entry[] = listing(EXAMPLES, ".document.yaml").map(
   (f) => [EXAMPLES, f] as const,
 );
 
-/** Execution documents: plans and replans (§6), for a single workflow. */
-export const [documentFiles, jointDocumentFiles] = split(allDocuments);
+/** Execution documents: plans and replans (§6), of one workflow or several jobs. */
+export const documentFiles = allDocuments;
+export const jointDocumentFiles = allDocuments.filter(isJoint);
 
 /** Planning-input documents: `interface` / `inventories` with no activities. */
-export const [inputDocumentFiles, jointInputDocumentFiles] = split(allInputDocuments);
+export const inputDocumentFiles = allInputDocuments;
 
 export const workflowFiles = [
   ...listing(EXAMPLES, ".workflow.yaml").map((f) => [EXAMPLES, f] as const),
