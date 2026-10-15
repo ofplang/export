@@ -10,12 +10,28 @@
  * does not have, two spots that do not meet — nothing is drawn and the reason
  * is given instead. A lifeline pieced together past a gap would look exactly
  * like a true one (design.md D59).
+ *
+ * Structured nodes add nothing to guess. Each invocation is a step of its own
+ * path (§6.3), declared by the process that ran there (`resolvePath`); a gate
+ * passes the Object it is given on unchanged (§6.15); an Array at the boundary
+ * is one Object per element, each on an arc that names its element (§6.4).
  */
 
-import { isBoundary, pathKey, type ArcRef, type NodePath, type PortRef, type SpotRef } from "./common";
+import {
+  isBoundary,
+  isGatePath,
+  pathKey,
+  pathText,
+  portRefKey,
+  type ArcRef,
+  type NodePath,
+  type PortRef,
+  type SpotRef,
+} from "./common";
 import type { ProcessingActivity } from "./document";
 import { carriesObject } from "./graph";
 import { accessesDevices, type Scene } from "./scene";
+import { resolvePath } from "./structure";
 import type { AtomicProcess, ObjectsSection, ProcessDef, Workflow } from "./workflow";
 
 export const OBJECT_IDENTITY_MAP = "object_identity_map";
@@ -84,13 +100,14 @@ function transformPaths(t: unknown): string[] {
  *   one that only holds its spots (§4.4.2)
  * - `waiting` on a spot between steps — before a move picks it up, after a
  *   move drops it off, at a relay between legs
- * - `transport` a move, `relay` the instant a leg hands over to the next
+ * - `transport` a move, `relay` the instant a leg hands over to the next,
+ *   `gate` the instant it leaves a region through its gate (§6.15)
  *
  * `from` and `to` are where the stretch begins and ends; they differ only
  * for a move and for a step whose output spot is not its input spot. Either
  * may be absent where the document leaves a step's spots out (§6.3).
  */
-export type SegmentKind = "processing" | "resting" | "waiting" | "transport" | "relay";
+export type SegmentKind = "processing" | "resting" | "waiting" | "transport" | "relay" | "gate";
 
 export interface Segment {
   readonly kind: SegmentKind;
@@ -104,11 +121,11 @@ export interface Segment {
 
 export type Origin =
   | { readonly kind: "create"; readonly node: NodePath; readonly port: string }
-  | { readonly kind: "input"; readonly port: string };
+  | { readonly kind: "input"; readonly port: string; readonly index?: readonly number[] };
 
 export type Fate =
   | { readonly kind: "consume"; readonly node: NodePath; readonly port: string }
-  | { readonly kind: "output"; readonly port: string };
+  | { readonly kind: "output"; readonly port: string; readonly index?: readonly number[] };
 
 export interface ObjectTrace {
   /** Stable within a plan: where the Object came from. */
@@ -132,9 +149,21 @@ export type ObjectTracing =
   | { readonly ok: true; readonly traces: readonly ObjectTrace[] }
   | { readonly ok: false; readonly reasons: readonly string[] };
 
-const portKey = (e: PortRef): string => `${pathKey(e.node)}|${e.port}`;
-const portName = (node: NodePath, port: string): string =>
-  node.length ? `${node.join(".")}.${port}` : `inputs.${port}`;
+const portKey = portRefKey;
+const indexText = (index: readonly number[] | undefined): string => (index ? `[${index.join(",")}]` : "");
+const portName = (node: NodePath, port: string, index?: readonly number[]): string =>
+  node.length ? `${pathText(node)}.${port}${indexText(index)}` : `inputs.${port}${indexText(index)}`;
+
+/** The type of one element of an Array type, `depth` levels down (`Array<Plate>` → `Plate`). */
+function elementType(type: string, depth: number): string {
+  let t = type;
+  for (let i = 0; i < depth; i++) {
+    const m = /^\s*Array<(.*)>\s*$/.exec(t);
+    if (!m) return t;
+    t = m[1]!;
+  }
+  return t;
+}
 
 class Untraceable extends Error {}
 
@@ -177,12 +206,17 @@ class Tracer {
   private readonly arcTo = new Map<string, string>();
   private readonly visited = new Set<string>();
   private readonly horizon: number;
+  /** Gate path key → the gate activity's index (§6.15). */
+  private readonly gates = new Map<string, number>();
 
   constructor(
     private readonly scene: Scene,
     private readonly wf: Workflow,
   ) {
     this.horizon = scene.metrics.horizon;
+    scene.activities.forEach((a, i) => {
+      if (a.kind === "gate") this.gates.set(pathKey(a.node), i);
+    });
     for (const [key, legs] of scene.byArc) {
       const first = scene.activities[legs[0]!];
       if (!first || !("arc" in first)) continue;
@@ -206,28 +240,33 @@ class Tracer {
 
     // Born inside the workflow: every created output of every step.
     for (const [key, list] of this.scene.byNode) {
-      const def = this.atomicAt(key.split("."));
+      const i = this.onlyStep(key, list);
+      const step = this.scene.activities[i] as ProcessingActivity;
+      const def = this.atomicOf(step);
       for (const path of objectsOf(def, this.wf).create ?? []) {
         const port = path.slice("outputs.".length);
-        const i = this.onlyStep(key, list);
-        const node = (this.scene.activities[i] as ProcessingActivity).node;
-        traces.push(this.follow({ kind: "create", node, port }, def.outputs[port]?.type ?? "", i));
+        traces.push(this.follow({ kind: "create", node: step.node, port }, def.outputs[port]?.type ?? "", i));
       }
     }
-    // Born outside it: every entry input, which arrives by a boundary arc.
+    // Born outside it: every entry input, which arrives by a boundary arc —
+    // one per element of an Array, the arc naming the element (§6.4).
     for (const { arc } of this.arcs.values())
       if (isBoundary(arc.from)) {
         const entry = this.wf.processes[this.wf.entry];
-        traces.push(this.follow({ kind: "input", port: arc.from.port }, entry?.inputs[arc.from.port]?.type ?? ""));
+        const type = elementType(entry?.inputs[arc.from.port]?.type ?? "", arc.from.index?.length ?? 0);
+        const origin: Origin = arc.from.index
+          ? { kind: "input", port: arc.from.port, index: arc.from.index }
+          : { kind: "input", port: arc.from.port };
+        traces.push(this.follow(origin, type));
       }
 
     // Every Object a step takes in must have been brought to it. An entry
     // input whose boundary move is missing would otherwise go unnoticed.
-    for (const key of this.scene.byNode.keys()) {
-      const def = this.atomicAt(key.split("."));
-      for (const [port, d] of Object.entries(def.inputs))
-        if (carriesObject(d.type, this.wf) && !this.arcTo.has(`${key}|${port}`))
-          throw new Untraceable(`${key}.${port}: the plan brings no Object to it`);
+    for (const [key, list] of this.scene.byNode) {
+      const step = this.scene.activities[this.onlyStep(key, list)] as ProcessingActivity;
+      for (const [port, d] of Object.entries(this.atomicOf(step).inputs))
+        if (carriesObject(d.type, this.wf) && !this.arcTo.has(portKey({ node: step.node, port })))
+          throw new Untraceable(`${portName(step.node, port)}: the plan brings no Object to it`);
     }
     // Checked second: a move no Object reaches is usually the symptom of the above.
     for (const key of this.arcs.keys())
@@ -241,8 +280,8 @@ class Tracer {
   private follow(origin: Origin, type: string, birth?: number): ObjectTrace {
     const segments: Segment[] = [];
     const arcs: string[] = [];
-    const where = origin.kind === "create" ? portName(origin.node, origin.port) : `inputs.${origin.port}`;
-    const id = origin.kind === "create" ? `create:${where}` : `input:${origin.port}`;
+    const where = origin.kind === "create" ? portName(origin.node, origin.port) : portName([], origin.port, origin.index);
+    const id = origin.kind === "create" ? `create:${where}` : `input:${origin.port}${indexText(origin.index)}`;
 
     const push = (s: Segment): void => {
       const last = segments[segments.length - 1];
@@ -265,14 +304,14 @@ class Tracer {
       push(this.step(birth!, spot, spot));
       at = { node: origin.node, port: origin.port };
     } else {
-      at = { node: [], port: origin.port };
+      at = origin.index ? { node: [], port: origin.port, index: origin.index } : { node: [], port: origin.port };
     }
 
     for (;;) {
       const key = this.arcFrom.get(portKey(at));
       // A valid workflow discards no Object (workflow spec §13), so every
       // Object output goes somewhere; a plan without the move is missing it.
-      if (!key) throw new Untraceable(`${portName(at.node, at.port)}: the plan moves it nowhere`);
+      if (!key) throw new Untraceable(`${portName(at.node, at.port, at.index)}: the plan moves it nowhere`);
       if (this.visited.has(key)) throw new Untraceable(`${where}: the move ${key} is reached twice`);
       this.visited.add(key);
       arcs.push(key);
@@ -296,13 +335,28 @@ class Tracer {
         const last = segments[segments.length - 1]!;
         if (this.horizon > last.end)
           segments.push({ kind: "waiting", start: last.end, end: this.horizon, from: last.to, to: last.to });
-        return this.done(id, where, type, origin, { kind: "output", port: arc.to.port }, segments, arcs);
+        const fate: Fate = arc.to.index
+          ? { kind: "output", port: arc.to.port, index: arc.to.index }
+          : { kind: "output", port: arc.to.port };
+        return this.done(id, where, type, origin, fate, segments, arcs);
+      }
+
+      if (isGatePath(arc.to.node)) {
+        // Into a gate, and out of it the same Object: a gate passes on what
+        // it is given (§6.15). It waits there on the gate's spot.
+        const g = this.gates.get(pathKey(arc.to.node));
+        if (g === undefined) throw new Untraceable(`${pathText(arc.to.node)}: the plan has no such gate`);
+        const gate = this.scene.activities[g]!;
+        const spot = gate.kind === "gate" ? gate.spot : undefined;
+        push({ kind: "gate", start: gate.start, end: gate.end, from: spot, to: spot, activity: g });
+        at = { node: arc.to.node, port: "out" };
+        continue;
       }
 
       const nodeKey = pathKey(arc.to.node);
       const i = this.onlyStep(nodeKey, this.scene.byNode.get(nodeKey));
       const a = this.scene.activities[i] as ProcessingActivity;
-      const o = objectsOf(this.atomicAt(arc.to.node), this.wf);
+      const o = objectsOf(this.atomicOf(a), this.wf);
       const inPath = `inputs.${arc.to.port}`;
       const inSpot = a.inputSpots?.[arc.to.port];
 
@@ -346,14 +400,10 @@ class Tracer {
     return list[0]!;
   }
 
-  private atomicAt(path: NodePath): AtomicProcess {
-    let def: ProcessDef | undefined = this.wf.processes[this.wf.entry];
-    for (const id of path) {
-      if (def?.kind !== "composite") break;
-      const inv = def.body.nodes.find((n) => n.id === id);
-      def = inv ? this.wf.processes[inv.process] : undefined;
-    }
-    if (def?.kind !== "atomic") throw new Untraceable(`${path.join(".")} is not an atomic step of the workflow`);
+  /** The declarations of the process a step ran — through its invocation and any arm (`resolvePath`). */
+  private atomicOf(step: ProcessingActivity): AtomicProcess {
+    const def: ProcessDef | undefined = resolvePath(this.wf, step.node, step.process)?.def;
+    if (def?.kind !== "atomic") throw new Untraceable(`${pathText(step.node)} is not an atomic step of the workflow`);
     return def;
   }
 }

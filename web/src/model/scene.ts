@@ -12,7 +12,7 @@
  * selection.
  */
 
-import { arcKey, deviceOf, pathKey, type NodePath } from "./common";
+import { arcKey, deviceOf, pathKey, sourcePath, type NodePath } from "./common";
 import type { Activity, ExecutionDocument, ProcessingActivity } from "./document";
 import type { Environment } from "./environment";
 import type { Workflow } from "./workflow";
@@ -73,6 +73,14 @@ export interface Scene {
   readonly byArc: ReadonlyMap<string, readonly number[]>;
   /** machine id → indices of everything that holds it, or rests on it (§4.4.2). */
   readonly byMachine: ReadonlyMap<string, readonly number[]>;
+  /**
+   * The work that stands on an outcome the plan only assumes (§6.14): what
+   * runs inside a branch's assumed arm, or in the one invocation a traversal
+   * of a length not yet counted is planned on. It may not happen at all.
+   * A loop assumed to end has nothing of the kind — its invocations so far
+   * happen whatever the decision says.
+   */
+  readonly assumed: ReadonlySet<number>;
 
   readonly machines: readonly Machine[];
   readonly resources: readonly ResourceTrace[];
@@ -151,6 +159,9 @@ export function buildScene(
     transport: 0,
     relay: 0,
     replenishment: 0,
+    decision: 0,
+    gate: 0,
+    reservation: 0,
   };
   for (const a of activities) counts[a.kind] += 1;
 
@@ -163,6 +174,7 @@ export function buildScene(
     byNode,
     byArc,
     byMachine,
+    assumed: assumedWork(activities),
     machines,
     resources,
     metrics: {
@@ -260,6 +272,28 @@ function replayResources(doc: ExecutionDocument, env: Environment | undefined): 
   return out.sort((a, b) => a.ref.localeCompare(b.ref));
 }
 
+/**
+ * The activities under a region whose outcome is assumed (`Scene.assumed`).
+ * Under means the region's own path is a prefix of the activity's — of a
+ * step's node, or of either end of a move's arc.
+ */
+function assumedWork(activities: readonly Activity[]): Set<number> {
+  const regions = activities
+    .filter((a) => a.kind === "decision" && a.assumed && a.arm !== "exit" && a.arm !== "continue")
+    .map((a) => pathKey((a as { node: NodePath }).node));
+  const out = new Set<number>();
+  if (!regions.length) return out;
+  const under = (p: NodePath): boolean => {
+    const k = pathKey(p);
+    return regions.some((r) => k === r || k.startsWith(`${r}.`));
+  };
+  activities.forEach((a, i) => {
+    if (a.kind === "processing" ? under(a.node) : (a.kind === "transport" || a.kind === "relay") && (under(a.arc.from.node) || under(a.arc.to.node)))
+      out.add(i);
+  });
+  return out;
+}
+
 /** Total time covered by a set of possibly overlapping intervals. */
 function mergedLength(intervals: readonly [number, number][]): number {
   const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
@@ -317,28 +351,31 @@ export function accessesDevices(a: ProcessingActivity, env?: Environment): boole
   return mode?.deviceAccess !== false;
 }
 
-/** Every activity at or below a node — a collapsed composite stands for all of
- *  its descendants, which is what D11's badge counts. */
+/**
+ * Every activity at or below a workflow node — a collapsed composite stands
+ * for all of its descendants, which is what D11's badge counts.
+ *
+ * `path` is the node's path in the workflow's own structure, with no
+ * invocation positions (`sourcePath`): every invocation of a structured node
+ * is that node. What a decision, gate or reservation names is under it too.
+ */
 export function activitiesUnder(scene: Scene, path: NodePath): number[] {
-  const prefix = pathKey(path);
+  const prefix = pathKey(sourcePath(path));
+  const isUnder = (p: NodePath): boolean => {
+    const k = pathKey(sourcePath(p));
+    return prefix === "" || k === prefix || k.startsWith(prefix + ".");
+  };
   const out: number[] = [];
-  for (const [key, list] of scene.byNode) {
-    if (prefix === "" || key === prefix || key.startsWith(prefix + ".")) out.push(...list);
-  }
-
-  // Moves belong to a node when either end of their arc sits under it.
   scene.activities.forEach((a, i) => {
-    if (a.kind !== "transport" && a.kind !== "relay") return;
-    for (const end of [a.arc.from, a.arc.to]) {
-      const k = pathKey(end.node);
-      if (k !== "" && (k === prefix || k.startsWith(prefix + ".") || prefix === "")) {
-        out.push(i);
-        return;
-      }
+    if (a.kind === "replenishment") return;
+    if (a.kind === "transport" || a.kind === "relay") {
+      // Moves belong to a node when either end of their arc sits under it.
+      if ([a.arc.from, a.arc.to].some((end) => end.node.length > 0 && isUnder(end.node))) out.push(i);
+      return;
     }
+    if (isUnder(a.node)) out.push(i);
   });
-
-  return [...new Set(out)].sort((x, y) => x - y);
+  return out;
 }
 
 /** The activities that move the same Object as this one — its whole journey. */

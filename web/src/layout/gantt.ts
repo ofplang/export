@@ -20,7 +20,7 @@
  * Pure functions over the scene: no DOM, no colours, no pixels.
  */
 
-import { deviceOf, spotNameOf } from "../model/common";
+import { deviceOf, pathText, sourcePath, spotNameOf } from "../model/common";
 import type { Activity } from "../model/document";
 import { tracingOf, type SegmentKind } from "../model/objects";
 import { accessesDevices, holdingDevices, type Scene } from "../model/scene";
@@ -38,7 +38,17 @@ export const GANTT_VIEWS: readonly { id: GanttView; label: string; hint: string 
  * `resting` is a step that holds its spots but not its device (§4.4.2);
  * `waiting` an Object sitting on a spot between two things that happen to it.
  */
-export type BarStyle = "processing" | "resting" | "transport" | "held" | "relay" | "replenishment" | "waiting";
+export type BarStyle =
+  | "processing"
+  | "resting"
+  | "transport"
+  | "held"
+  | "relay"
+  | "replenishment"
+  | "waiting"
+  | "decision"
+  | "gate"
+  | "reserved";
 
 export interface Lane {
   readonly id: string;
@@ -99,20 +109,47 @@ export function activityLabel(a: Activity): string {
       return `wait at ${a.spot}`;
     case "replenishment":
       return `refill ${a.device}`;
+    case "decision":
+      return `decide ${pathText(a.node)}`;
+    case "gate":
+      return `gate ${pathText(a.node)}`;
+    case "reservation":
+      return `keep for ${pathText(a.node)}`;
   }
+}
+
+/**
+ * What a decision says, in a few words: the arm, the loop ending, the length,
+ * with a `?` while the plan only assumes it (§6.14).
+ */
+export function decisionText(a: Activity & { kind: "decision" }): string {
+  const what =
+    a.length !== undefined
+      ? `${a.length} long`
+      : a.arm === "exit"
+        ? `ends after ${(a.iteration ?? 0) + 1}`
+        : a.arm === "continue"
+          ? "goes on"
+          : (a.arm ?? "");
+  return a.assumed ? `${what}?` : what;
 }
 
 /** The short form used inside a bar, where there is little room. */
 function barLabel(a: Activity): string {
   switch (a.kind) {
     case "processing":
-      return a.node.length ? a.node[a.node.length - 1]! : a.process;
+      return a.node.length ? String(a.node[a.node.length - 1]) : a.process;
     case "transport":
       return `${deviceOf(a.fromSpot)} → ${deviceOf(a.toSpot)}`;
     case "relay":
+    case "gate":
       return "";
     case "replenishment":
       return `+${Object.keys(a.amounts).join(", ")}`;
+    case "decision":
+      return `${sourcePath(a.node).at(-1) ?? ""} ${decisionText(a)}`;
+    case "reservation":
+      return sourcePath(a.node).at(-1) ?? "";
   }
 }
 
@@ -120,12 +157,22 @@ function barLabel(a: Activity): string {
  *  It exists only when something needs it; nothing disappears silently. */
 const NO_MACHINE = "(no device)";
 
+/** Lane for the decisions, which happen on no machine (§6.14). Only when there are some. */
+const DECISIONS = "(decisions)";
+
 function deviceLayout(scene: Scene): GanttLayout {
   // Bars are filed by lane id first and numbered at the end, because spot
   // lanes are only known once the activities have been read.
   const filed: (Omit<Bar, "lane"> & { laneId: string })[] = [];
   /** device id → the spot lanes that sit under it, in order of first use. */
   const spotLanes = new Map<string, string[]>();
+  const spotLane = (spot: string): string => {
+    const device = deviceOf(spot);
+    const list = spotLanes.get(device) ?? [];
+    if (!list.includes(spot)) list.push(spot);
+    spotLanes.set(device, list);
+    return spot;
+  };
 
   scene.activities.forEach((a, index) => {
     const at = (id: string | undefined, style: BarStyle, label: string): void => {
@@ -140,13 +187,7 @@ function deviceLayout(scene: Scene): GanttLayout {
           // may share one device at the same time — a fridge with two slots.
           // On the device's own lane they would overlap, so each goes on the
           // lane of the spot it holds, directly under its device.
-          for (const spot of heldSpots(a, scene)) {
-            const device = deviceOf(spot);
-            const list = spotLanes.get(device) ?? [];
-            if (!list.includes(spot)) list.push(spot);
-            spotLanes.set(device, list);
-            at(spot, style, barLabel(a));
-          }
+          for (const spot of heldSpots(a, scene)) at(spotLane(spot), style, barLabel(a));
           break;
         }
         const held = holdingDevices(a, scene.env);
@@ -180,6 +221,18 @@ function deviceLayout(scene: Scene): GanttLayout {
         at(a.device, "replenishment", barLabel(a));
         at(a.replenisher, "replenishment", "");
         break;
+      case "decision":
+        at(DECISIONS, "decision", barLabel(a));
+        break;
+      case "gate":
+        // An Object waits in its gate on a spot; a Pure Data gate is on none,
+        // so it goes where the work that holds no machine does.
+        at(a.spot ? deviceOf(a.spot) : NO_MACHINE, "gate", "");
+        break;
+      case "reservation":
+        // Kept spots, not a device: on each spot's own lane (§6.16).
+        for (const spot of a.spots) at(spotLane(spot), "reserved", barLabel(a));
+        break;
     }
   });
 
@@ -199,6 +252,7 @@ function deviceLayout(scene: Scene): GanttLayout {
     for (const spot of spots) lanes.push({ id: spot, label: `· ${spotNameOf(spot)}`, tag: "spot" });
   }
   if (used.has(NO_MACHINE)) lanes.push({ id: NO_MACHINE, label: NO_MACHINE, tag: "" });
+  if (used.has(DECISIONS)) lanes.push({ id: DECISIONS, label: "decisions", tag: "" });
 
   const laneOf = new Map(lanes.map((l, i) => [l.id, i]));
   const bars: Bar[] = [];
@@ -219,11 +273,13 @@ function heldSpots(a: Activity & { kind: "processing" }, scene: Scene): string[]
 
 /** The top-level node an activity belongs to; moves are filed under their source. */
 function groupOf(a: Activity): string {
-  if (a.kind === "processing") return a.node[0] ?? "—";
   if (a.kind === "replenishment") return "refills";
-  const from = a.arc.from.node[0];
-  const to = a.arc.to.node[0];
-  return from ?? to ?? "interface";
+  if (a.kind === "transport" || a.kind === "relay") {
+    const from = a.arc.from.node[0];
+    const to = a.arc.to.node[0];
+    return String(from ?? to ?? "interface");
+  }
+  return a.node[0] === undefined ? "—" : String(a.node[0]);
 }
 
 function flowLayout(scene: Scene): GanttLayout {
@@ -299,6 +355,7 @@ const SEGMENT_STYLE: Readonly<Record<SegmentKind, BarStyle>> = {
   waiting: "waiting",
   transport: "transport",
   relay: "relay",
+  gate: "gate",
 };
 
 /** Short enough for the gutter, still a word. */
@@ -307,6 +364,9 @@ const KIND_TAG: Readonly<Record<Activity["kind"], string>> = {
   transport: "move",
   relay: "wait",
   replenishment: "refill",
+  decision: "decide",
+  gate: "gate",
+  reservation: "keep",
 };
 
 function styleOf(a: Activity, scene: Scene): BarStyle {
@@ -319,5 +379,11 @@ function styleOf(a: Activity, scene: Scene): BarStyle {
       return "relay";
     case "replenishment":
       return "replenishment";
+    case "decision":
+      return "decision";
+    case "gate":
+      return "gate";
+    case "reservation":
+      return "reserved";
   }
 }

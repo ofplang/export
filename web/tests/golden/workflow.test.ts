@@ -3,15 +3,17 @@
  * pass the feature gate.
  *
  * The gate assertion is the load-bearing one. It says the corpus stays inside
- * the subset this viewer draws; the day an example starts using `$import`, a
- * generic or a structured node, raising the pin turns this red and the gate
- * (design.md D10) has to earn its keep for real.
+ * the subset this viewer draws — structured nodes included; the day an
+ * example starts using `$import` or a generic, raising the pin turns this red
+ * and the gate (design.md D10) has to earn its keep for real.
  */
 
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
+import { armsOf, nodePorts } from "../../src/model/structure";
 import { gateSummary, gateWorkflow, readWorkflowText } from "../../src/read";
+import { SUPPORTED_FEATURES } from "../../src/read/gate";
 import { read, workflowFiles } from "./corpus";
 
 it("the pinned submodule ships workflows", () => {
@@ -35,14 +37,17 @@ for (const [dir, name] of workflowFiles)
       expect(gateSummary(report)).toBe("");
       expect(report.supported).toBe(true);
       expect(report.needsExpansion).toBe(false);
-      expect(report.derived).toEqual([]);
+      for (const f of report.derived) expect(SUPPORTED_FEATURES).toContain(f);
     });
 
     it("every node invokes a declared process", () => {
       for (const [pname, def] of Object.entries(wf.processes)) {
         if (def.kind !== "composite") continue;
-        for (const node of def.body.nodes)
-          expect(wf.processes[node.process], `${pname}/${node.id} -> ${node.process}`).toBeDefined();
+        for (const node of def.body.nodes) {
+          // A branch names a process per arm instead (workflow spec 21.0).
+          const invoked = node.kind === "branch" ? armsOf(node).map((a) => a.process) : [node.process];
+          for (const name of invoked) expect(wf.processes[name], `${pname}/${node.id} -> ${name}`).toBeDefined();
+        }
       }
     });
 
@@ -63,17 +68,19 @@ for (const [dir, name] of workflowFiles)
           }
           const src = byId.get(head);
           expect(src, `${where}: no sibling node "${head}"`).toBeDefined();
-          const srcDef = wf.processes[src!.process];
-          expect(srcDef, `${where}: ${src!.process} is undeclared`).toBeDefined();
+          // What a node exposes, shaped by its kind (§17-§21): a map's outputs
+          // collected, a loop's `exhausted`, a branch's common outputs.
           expect(
-            srcDef!.outputs[port],
-            `${where}: ${src!.process} has no output ${port}`,
+            nodePorts(wf, src!).outputs[port],
+            `${where}: ${src!.id} has no output ${port}`,
           ).toBeDefined();
         };
 
-        for (const node of def.body.nodes)
-          for (const [port, b] of Object.entries({ ...node.state, ...node.data }))
+        for (const node of def.body.nodes) {
+          for (const [port, b] of Object.entries({ ...node.state, ...node.data, ...node.each, ...node.carry, ...node.args }))
             check(b.from, `${pname}/${node.id}.${port}`);
+          if (node.kind === "branch" && node.condition?.from) check(node.condition.from, `${pname}/${node.id}.condition`);
+        }
         for (const [port, b] of Object.entries(def.body.returns))
           check(b.from, `${pname}.returns.${port}`);
       }

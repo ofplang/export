@@ -138,7 +138,7 @@ interface Sized {
 
 /** A connection inside a container, named by where it lands: one binding per input port. */
 const laneId = (target: string, port: string): string => `in:${target}.${port}`;
-const returnId = (port: string): string => `out:${port}`;
+const returnId = (port: string, from: string): string => `out:${port}<${from}`;
 
 export function layoutGraph(root: GraphNode, expanded: ReadonlySet<string>): GraphLayout {
   const sized = measure(root, expanded);
@@ -238,30 +238,33 @@ export function layoutGraph(root: GraphNode, expanded: ReadonlySet<string>): Gra
       }
     }
 
-    // What the container hands back out, drawn to its right border.
-    for (const [port, source] of Object.entries(s.node.returns)) {
-      const dot = source.indexOf(".");
-      if (dot < 0) continue;
-      const src = byId.get(source.slice(0, dot));
-      const to = laid.outputs.find((a) => a.port === port);
-      if (!src || !to) continue;
-      const from = anchorsOf(src).outputs.find((a) => a.port === source.slice(dot + 1));
-      if (!from) continue;
-      const fromType = src.sized.node.outputTypes[from.port];
-      const toType = s.node.outputTypes[port];
-      const route = [...leadOut(src, from), ...through(returnId(port))];
-      edges.push({
-        from: { x: from.x, y: from.y },
-        to: { x: to.x, y: to.y },
-        object: s.node.returnsObject[port] ?? true,
-        fromKey: src.sized.node.key,
-        fromPort: from.port,
-        toKey: laid.key,
-        toPort: port,
-        ...(fromType !== undefined ? { fromType } : {}),
-        ...(toType !== undefined ? { toType } : {}),
-        ...routeOf(route),
-      });
+    // What the container hands back out, drawn to its right border — from
+    // each arm, for a branch.
+    for (const [port, sources] of Object.entries(s.node.returns)) {
+      for (const source of sources) {
+        const dot = source.indexOf(".");
+        if (dot < 0) continue;
+        const src = byId.get(source.slice(0, dot));
+        const to = laid.outputs.find((a) => a.port === port);
+        if (!src || !to) continue;
+        const from = anchorsOf(src).outputs.find((a) => a.port === source.slice(dot + 1));
+        if (!from) continue;
+        const fromType = src.sized.node.outputTypes[from.port];
+        const toType = s.node.outputTypes[port];
+        const route = [...leadOut(src, from), ...through(returnId(port, src.sized.node.id))];
+        edges.push({
+          from: { x: from.x, y: from.y },
+          to: { x: to.x, y: to.y },
+          object: s.node.returnsObject[port] ?? true,
+          fromKey: src.sized.node.key,
+          fromPort: from.port,
+          toKey: laid.key,
+          toPort: port,
+          ...(fromType !== undefined ? { fromType } : {}),
+          ...(toType !== undefined ? { toType } : {}),
+          ...routeOf(route),
+        });
+      }
     }
 
     for (const p of s.placed) place(p.sized, ox + p.x, oy + p.y, depth + 1);
@@ -458,12 +461,13 @@ function connections(
         out.push({ id, fromCol: layer.get(src.node.id) ?? 0, toCol, source: { kind: "node", sized: src, port: tail }, target: c, port });
     }
   }
-  for (const [port, from] of Object.entries(node.returns)) {
-    const [head, tail] = split(from);
-    const src = byId.get(head);
-    if (src)
-      out.push({ id: returnId(port), fromCol: layer.get(src.node.id) ?? 0, toCol: columns, source: { kind: "node", sized: src, port: tail } });
-  }
+  for (const [port, sources] of Object.entries(node.returns))
+    for (const from of sources) {
+      const [head, tail] = split(from);
+      const src = byId.get(head);
+      if (src)
+        out.push({ id: returnId(port, head), fromCol: layer.get(src.node.id) ?? 0, toCol: columns, source: { kind: "node", sized: src, port: tail } });
+    }
   return out;
 }
 

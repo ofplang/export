@@ -202,14 +202,16 @@ def warnings(docs: DocumentSet) -> list[Finding]:
         body = d.get("body")
         nodes = body.get("nodes") if isinstance(body, dict) else None
         for i, n in enumerate(nodes if isinstance(nodes, list) else []):
-            if isinstance(n, dict) and "kind" in n:
-                kind = n["kind"]
-                what = (
-                    f"a structured node (`kind: {kind}`)"
-                    if kind in _NODE_KINDS
-                    else f"an unrecognised node kind (`kind: {kind}`)"
+            # The structured nodes are drawn (map, fold, do_while, branch); only a
+            # kind v0 does not define is left out.
+            if isinstance(n, dict) and "kind" in n and n["kind"] not in _NODE_KINDS:
+                out.append(
+                    Finding(
+                        f"an unrecognised node kind (`kind: {n['kind']}`)",
+                        f"{base}.body.nodes[{i}]",
+                        "not a v0 structured node; it is skipped rather than guessed at",
+                    )
                 )
-                out.append(Finding(what, f"{base}.body.nodes[{i}]", "only the source structure is drawn"))
     return out
 
 

@@ -13,32 +13,28 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodePath } from "../../src/model/common";
-import { pathKey } from "../../src/model/common";
-import type { NodeInvocation, ProcessDef, Workflow } from "../../src/model/workflow";
+import { GATE_OUT, isGatePath, pathKey } from "../../src/model/common";
+import { nodePorts, resolvePath } from "../../src/model/structure";
+import type { ProcessDef, Workflow } from "../../src/model/workflow";
 import { readEnvironmentText, readExecutionDocumentText, readWorkflowText } from "../../src/read";
 import { read, triples } from "./corpus";
 
-/** Walk a node path from the entry composite down. */
+/**
+ * Walk a node path from the entry composite down — through every invocation
+ * of a structured node and into a branch's arms (`resolvePath`). The empty
+ * path is the entry composite itself.
+ */
 function resolve(
   wf: Workflow,
   path: NodePath,
+  process?: string,
 ): { process: string; def: ProcessDef } | undefined {
-  const entry: ProcessDef | undefined = wf.processes[wf.entry];
-  if (!entry) return undefined;
-  if (path.length === 0) return { process: wf.entry, def: entry };
-
-  let container: ProcessDef = entry;
-  let processName = wf.entry;
-  for (const id of path) {
-    if (container.kind !== "composite") return undefined;
-    const inv: NodeInvocation | undefined = container.body.nodes.find((n) => n.id === id);
-    if (!inv) return undefined;
-    const next: ProcessDef | undefined = wf.processes[inv.process];
-    if (!next) return undefined;
-    processName = inv.process;
-    container = next;
+  if (path.length === 0) {
+    const entry = wf.processes[wf.entry];
+    return entry ? { process: wf.entry, def: entry } : undefined;
   }
-  return { process: processName, def: container };
+  const hit = resolvePath(wf, path, process);
+  return hit?.def ? { process: hit.process, def: hit.def } : undefined;
 }
 
 it("the corpus has complete workflow + environment + plan triples", () => {
@@ -54,7 +50,7 @@ for (const t of triples)
     it("every processing activity resolves to the workflow node it names (§6.3)", () => {
       for (const a of doc.activities) {
         if (a.kind !== "processing") continue;
-        const hit = resolve(wf, a.node);
+        const hit = resolve(wf, a.node, a.process);
         expect(hit, `${pathKey(a.node)} does not resolve`).toBeDefined();
         // The join the linked highlight depends on: the node the plan points at
         // must be an invocation of the process the plan says ran.
@@ -92,6 +88,16 @@ for (const t of triples)
           ["from", a.arc.from],
           ["to", a.arc.to],
         ] as const) {
+          if (isGatePath(end.node)) {
+            // A gate's own ports are `in` and `out`; the port its path names
+            // after "@out" is one its region exposes (§6.15).
+            expect(["in", "out"], `${side} gate ${pathKey(end.node)}`).toContain(end.port);
+            const region = resolvePath(wf, end.node);
+            expect(region, `${side} gate ${pathKey(end.node)}: no region`).toBeDefined();
+            const named = String(end.node[end.node.indexOf(GATE_OUT) + 1]);
+            expect(Object.keys(nodePorts(wf, region!.invocation).outputs), `${pathKey(end.node)}`).toContain(named);
+            continue;
+          }
           const hit = resolve(wf, end.node);
           expect(hit, `${side} ${pathKey(end.node)} does not resolve`).toBeDefined();
 

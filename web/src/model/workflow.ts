@@ -2,8 +2,9 @@
  * The workflow — ofplang v0 (workflow spec).
  *
  * Only the subset this viewer reads: types, atomic and composite processes,
- * node invocations and their bindings. `$import`, generics and structured
- * nodes are out of scope and are refused by the feature gate (design.md D10).
+ * node invocations — plain and structured (§17-§20) — and their bindings.
+ * `$import` and generics are out of scope and are reported by the feature
+ * gate (design.md D10).
  */
 
 export interface PortDecl {
@@ -36,8 +37,16 @@ export interface AtomicProcess {
   readonly behavior?: readonly string[];
 }
 
+/** A node's `kind` (workflow spec 2.3); `invoke` is a plain, non-structured node. */
+export type NodeKind = "invoke" | "map" | "fold" | "do_while" | "branch";
+
+/** An output mode of a structured node (workflow spec §18.1, §19.1, §20.1). */
+export type OutputMode = "carry" | "collect" | "drop" | "common";
+
 export interface NodeInvocation {
   readonly id: string;
+  readonly kind: NodeKind;
+  /** The process invoked; for a `branch`, which names one per arm, the empty string. */
   readonly process: string;
   /** Object-bearing bindings. */
   readonly state: Readonly<Record<string, Binding>>;
@@ -49,6 +58,23 @@ export interface NodeInvocation {
    * no source, so no connection is drawn to it.
    */
   readonly literals: Readonly<Record<string, unknown>>;
+  /** `map` / `fold`: each element to one invocation (workflow spec §17, §18). */
+  readonly each: Readonly<Record<string, Binding>>;
+  /** `fold` / `do_while`: threaded from one invocation to the next (§18, §19). */
+  readonly carry: Readonly<Record<string, Binding>>;
+  /** `branch`: given to the arm that runs (§20). */
+  readonly args: Readonly<Record<string, Binding>>;
+  /** `branch`: the process of each arm. An omitted `else` is the identity arm (§20). */
+  readonly arms?: { readonly then: string; readonly else?: string };
+  /**
+   * `branch`: where its condition comes from, or the literal it is (§20);
+   * `do_while`: the output of its target the loop goes on while true (§19).
+   */
+  readonly condition?: { readonly from?: string; readonly value?: unknown; readonly output?: string };
+  /** `do_while`: `max_iterations`, as written — a literal or where it comes from (§19). */
+  readonly maxIterations?: { readonly from?: string; readonly value?: unknown };
+  /** `fold` / `do_while` / `branch`: the explicit `outputs` section, if written. */
+  readonly outputs?: Readonly<Record<string, OutputMode>>;
 }
 
 export interface CompositeProcess {

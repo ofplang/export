@@ -58,7 +58,7 @@ describe("a literal", () => {
     expect(heat.literals).toEqual({ minutes: 2.5 });
     expect(Object.keys(heat.bindings)).toEqual(["plate"]);
     expect(graph.returnLiterals).toEqual({ label: "heated" });
-    expect(graph.returns).toEqual({ plate: "Heat.plate" });
+    expect(graph.returns).toEqual({ plate: ["Heat.plate"] });
   });
 
   it("draws no connection, having no source", () => {

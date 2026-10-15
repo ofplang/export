@@ -203,9 +203,31 @@ test("the feature gate, refusing something it cannot draw", async ({ page }) => 
   await page.evaluate(() => {
     const banner = document.getElementById("banner")!;
     banner.innerHTML =
-      "<div><b>This viewer cannot draw a structured node (`kind: map`) faithfully, so parts of the graph are left out.</b>" +
-      "<ul><li>a structured node (`kind: map`) at <code>processes.main.body.nodes[3]</code> — the viewer draws source structure only and cannot show what this expands to (§17-§20)</li></ul></div>";
+      "<div><b>This viewer cannot draw a generic process (`type_params`) faithfully, so parts of the graph are left out.</b>" +
+      "<ul><li>a generic process (`type_params`) at <code>processes.wash.type_params</code> — the viewer does not instantiate generics, so it cannot say what this process's ports carry (§8)</li></ul></div>";
     banner.hidden = false;
   });
   await shot(page, "gate.banner");
+});
+
+test("structured nodes: a map of branches, a loop, a fold", async ({ page }) => {
+  for (const doc of ["inspect_then_wash", "rinse_until_clean", "dispense_read", "wash_or_polish"]) {
+    await page.goto(`/?doc=${doc}`);
+    await settle(page);
+    await page.locator("#expand-all").click();
+    await page.waitForTimeout(200);
+    await shot(page, `${doc}.structured.device`);
+    for (const view of ["flow", "object"]) {
+      await page.locator(`#views button[data-view="${view}"]`).click();
+      await page.waitForTimeout(200);
+      await shot(page, `${doc}.structured.${view}`);
+    }
+  }
+  // An arm picked: the steps it ran, and only those, light in the plan.
+  await page.goto("/?doc=inspect_then_wash");
+  await settle(page);
+  await page.locator("#expand-all").click();
+  await page.locator('[data-key="Each.Choose.@then"]').first().click();
+  await page.waitForTimeout(200);
+  await shot(page, "inspect_then_wash.structured.arm");
 });

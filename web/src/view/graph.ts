@@ -7,6 +7,7 @@
  */
 
 import { edgeSegments, GRAPH_METRICS, layoutGraph, type GraphLayout, type LaidEdge, type LaidNode } from "../layout/graph";
+import type { BoxNote } from "../model/annotate";
 import { edgeKey, type GraphNode } from "../model/graph";
 
 const { HEADER_H, PORT_ROW, BOX_HEADER } = GRAPH_METRICS;
@@ -42,6 +43,11 @@ export interface GraphOptions {
    * level of nesting, of which only the open ones are drawn (`arcRoute`).
    */
   readonly edges?: ReadonlySet<string>;
+  /**
+   * What the plan says of each structured box (`annotate`): its invocations,
+   * and for an arm how many invocations took it. Absent with no plan loaded.
+   */
+  readonly notes?: ReadonlyMap<string, BoxNote>;
 }
 
 export interface GraphRender {
@@ -73,6 +79,8 @@ export function renderGraph(root: GraphNode, opts: GraphOptions): GraphRender {
     [
       "gnode",
       n.node.kind,
+      n.node.structure === "invoke" ? "" : n.node.structure,
+      armState(n.node, opts.notes),
       n.open ? "open" : "shut",
       opts.lit.has(n.key) ? "lit" : "",
       opts.onPath.has(n.key) ? "on-path" : "",
@@ -82,8 +90,8 @@ export function renderGraph(root: GraphNode, opts: GraphOptions): GraphRender {
       .join(" ");
 
   const all = [...layout.shells, ...layout.leaves];
-  const shells = layout.shells.map((n) => shell(n, classesFor(n))).join("");
-  const leaves = layout.leaves.map((n) => leaf(n, classesFor(n))).join("");
+  const shells = layout.shells.map((n) => shell(n, classesFor(n), opts.notes)).join("");
+  const leaves = layout.leaves.map((n) => leaf(n, classesFor(n), opts.notes)).join("");
 
   const under = (key: string, root: string): boolean =>
     root === "" || key === root || key.startsWith(`${root}.`);
@@ -152,13 +160,52 @@ function pathOf(e: LaidEdge): string {
   );
 }
 
-function shell(n: LaidNode, cls: string): string {
+/**
+ * How a box names what it is, beside its id: nothing for a plain step of the
+ * same name, else its process — and for a structured node its kind, with
+ * what the plan says of it (`annotate`).
+ */
+function subtitle(node: GraphNode, notes: ReadonlyMap<string, BoxNote> | undefined): string {
+  const note = notes?.get(node.key);
+  const runs = note?.invocations !== undefined ? ` ×${note.invocations}` : "";
+  switch (node.structure) {
+    case "map":
+    case "fold":
+      return `${node.structure}${runs} · ${node.process}`;
+    case "do_while":
+      return `loop${runs}${node.limit !== undefined ? ` ≤${node.limit}` : ""} · ${node.process}`;
+    case "branch":
+      return node.condition ? `branch on ${node.condition}` : "branch";
+    case "arm": {
+      const counts = note ? [note.ran ? `×${note.ran}` : "", note.assumed ? `×${note.assumed}?` : ""].filter(Boolean).join(" ") : "";
+      return `${node.process || "as it came"}${counts ? ` · ${counts}` : ""}`;
+    }
+    default:
+      return node.process === node.id ? "" : node.process;
+  }
+}
+
+/**
+ * An arm the plan took (`ran`), one it only assumes (`assumed`, dashed), or
+ * one no invocation took (`idle`, receding). Nothing without a plan.
+ */
+function armState(node: GraphNode, notes: ReadonlyMap<string, BoxNote> | undefined): string {
+  const note = node.structure === "arm" ? notes?.get(node.key) : undefined;
+  if (!note) return "";
+  if (note.ran) return "ran";
+  if (note.assumed) return "assumed";
+  return "idle";
+}
+
+/** The id as shown: an arm is `then` / `else`. */
+const shownId = (node: GraphNode): string => (node.structure === "arm" ? (node.arm ?? node.id) : node.id);
+
+function shell(n: LaidNode, cls: string, notes?: ReadonlyMap<string, BoxNote>): string {
   const parts = [`<g class="${cls}" data-key="${esc(n.key)}" transform="translate(${r(n.x)},${r(n.y)})">`];
   parts.push(`<rect class="box" width="${r(n.w)}" height="${r(n.h)}"/>`);
-  parts.push(`<text class="nid" x="11" y="16">${esc(n.node.id || n.node.process)}</text>`);
-  parts.push(
-    `<text class="nsub" x="${r(n.w) - 11}" y="16" text-anchor="end">${esc(n.node.process)} · ${n.node.atomicCount} steps</text>`,
-  );
+  parts.push(`<text class="nid" x="11" y="16">${esc(shownId(n.node) || n.node.process)}</text>`);
+  const sub = n.node.structure === "invoke" ? `${n.node.process} · ${n.node.atomicCount} steps` : subtitle(n.node, notes);
+  parts.push(`<text class="nsub" x="${r(n.w) - 11}" y="16" text-anchor="end">${esc(sub)}</text>`);
   parts.push(`<line class="rule" x1="0" y1="${BOX_HEADER}" x2="${r(n.w)}" y2="${BOX_HEADER}"/>`);
   if (n.node.key !== "")
     parts.push(`<text class="chev" x="11" y="${r(n.h) - 8}">▾ close</text>`);
@@ -167,12 +214,20 @@ function shell(n: LaidNode, cls: string): string {
   return parts.join("");
 }
 
-function leaf(n: LaidNode, cls: string): string {
+function leaf(n: LaidNode, cls: string, notes?: ReadonlyMap<string, BoxNote>): string {
   const parts = [`<g class="${cls}" data-key="${esc(n.key)}" transform="translate(${r(n.x)},${r(n.y)})">`];
   parts.push(`<rect class="box" width="${r(n.w)}" height="${r(n.h)}"/>`);
-  parts.push(`<text class="nid" x="10" y="16">${esc(clip(n.node.id, 15))}</text>`);
+  parts.push(`<text class="nid" x="10" y="16">${esc(clip(shownId(n.node), 15))}</text>`);
 
-  if (n.node.kind === "composite") {
+  if (n.node.structure !== "invoke") {
+    // What kind of node it is matters more than the step count: `map ×3`,
+    // `loop ≤5`, `then · wash ×2`. The full text is the tooltip.
+    const sub = subtitle(n.node, notes);
+    parts.push(
+      `<text class="nsub" x="${r(n.w) - 9}" y="16" text-anchor="end"><title>${esc(sub)}</title>${esc(clip(sub, 18))}</text>`,
+    );
+    if (n.node.kind === "composite") parts.push(`<text class="chev" x="10" y="${r(n.h) - 6}">▸ open</text>`);
+  } else if (n.node.kind === "composite") {
     // The badge is the affordance and the count at once (D11). It sits inside
     // the header with room to spare — at fourteen pixels it landed on the rule.
     const w = 38;

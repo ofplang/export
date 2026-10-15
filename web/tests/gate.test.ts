@@ -97,11 +97,11 @@ entry: main
     ["fold", "node_fold"],
     ["do_while", "node_do_while"],
     ["branch", "node_branch"],
-  ])("`kind: %s` derives %s", (kind, feature) => {
+  ])("`kind: %s` derives %s, which the viewer draws", (kind, feature) => {
     const r = gate(withKind(kind));
-    expect(r.supported).toBe(false);
+    expect(r.supported).toBe(true);
     expect(r.derived).toEqual([feature]);
-    expect(r.findings[0]?.at).toBe("processes.main.body.nodes[0]");
+    expect(r.findings).toEqual([]);
   });
 
   it("an unrecognised kind is refused rather than guessed at", () => {
@@ -164,15 +164,13 @@ describe("what the document declares is not what it requires (§4.1)", () => {
     const r = gate(`
 features: []
 processes:
-  main:
-    kind: composite
-    body:
-      nodes: [{ id: n, kind: map, process: p }]
-      returns: {}
-entry: main
+  wash:
+    kind: atomic
+    type_params: { O: { domain: object } }
+entry: wash
 `);
     expect(r.declared).toEqual([]);
-    expect(r.derived).toEqual(["node_map"]);
+    expect(r.derived).toEqual(["generic_processes"]);
     expect(r.supported).toBe(false);
   });
 });

@@ -17,15 +17,24 @@
  *   - A boundary arc endpoint has an *empty* node path — not a missing one (§6.4).
  *   - `objective.kind` / `value` are a scalar or a list (§6.1).
  *   - A Pure-Data-only processing activity has no devices and no spots (§6.3).
+ *   - A path names each invocation of a structured node by its position — an
+ *     integer, never a string — and a gate by `"@out"` and its port (§6.3).
+ *   - A decision, a gate and a reservation (§6.14-§6.16) are planned, never
+ *     dispatched; a decision and a gate are instants, and all three disappear
+ *     from the plan once what they stand for has happened.
+ *   - An Array at the boundary is bound to a list of spots, nested as it is (§6.8).
  */
 
 import { parse as parseYaml } from "yaml";
 
-import type { ArcRef, NodePath, PortRef } from "../model/common";
+import { GATE_OUT, type ArcRef, type NodePath, type PortRef } from "../model/common";
 import type {
   Activity,
   ActivityStatus,
+  DecisionActivity,
   ExecutionDocument,
+  Expansion,
+  GateActivity,
   InterfaceBinding,
   Inventories,
   Objective,
@@ -33,6 +42,8 @@ import type {
   ProcessingActivity,
   RelayActivity,
   ReplenishmentActivity,
+  ReservationActivity,
+  SpotTree,
   TransportActivity,
 } from "../model/document";
 import {
@@ -57,7 +68,9 @@ import { gateDocument, UnsupportedError } from "./gate";
 
 const OUTCOMES = ["optimal", "feasible", "infeasible", "unknown"] as const;
 const STATUSES = ["pending", "running", "completed", "failed", "cancelled"] as const;
-const KINDS = ["processing", "transport", "relay", "replenishment"] as const;
+const KINDS = ["processing", "transport", "relay", "replenishment", "decision", "gate", "reservation"] as const;
+const DECISION_ARMS = ["then", "else", "exit", "continue"] as const;
+const BRANCH_ARMS = ["then", "else"] as const;
 
 /** Parse YAML text into an execution document. */
 export function readExecutionDocumentText(text: string): ExecutionDocument {
@@ -94,6 +107,8 @@ export function readExecutionDocument(raw: unknown): ExecutionDocument {
   const now = optNumber(doc["now"], "now");
   if (now !== undefined) out.now = now;
   if (iface) out.interface = readInterface(iface);
+  const expansion = optRecord(doc["expansion"], "expansion");
+  if (expansion) out.expansion = readExpansion(expansion);
   if (inv) out.inventories = readInventories(inv);
   if (doc["outcome"] !== undefined && doc["outcome"] !== null)
     out.outcome = oneOf<Outcome>(doc["outcome"], "outcome", OUTCOMES);
@@ -139,9 +154,16 @@ function readObjective(o: Record<string, unknown>): Objective {
 }
 
 function readInterface(i: Record<string, unknown>): InterfaceBinding {
-  const inputs = i["inputs"] === undefined ? {} : stringMap(i["inputs"], "interface.inputs");
-  const outputs = optRecord(i["outputs"], "interface.outputs");
-  return outputs ? { inputs, outputs: stringMap(outputs, "interface.outputs") } : { inputs };
+  const side = (key: "inputs" | "outputs"): Record<string, SpotTree> | undefined => {
+    const src = optRecord(i[key], at("interface", key));
+    if (!src) return undefined;
+    const out: Record<string, SpotTree> = {};
+    for (const [port, spots] of Object.entries(src)) out[port] = readSpotTree(spots, at(at("interface", key), port));
+    return out;
+  };
+  const inputs = side("inputs") ?? {};
+  const outputs = side("outputs");
+  return outputs ? { inputs, outputs } : { inputs };
 }
 
 function readInventories(i: Record<string, unknown>): Inventories {
@@ -176,7 +198,88 @@ function readActivity(raw: unknown, path: string): Activity {
       return readRelay(a, path, base);
     case "replenishment":
       return readReplenishment(a, path, base);
+    case "decision":
+      return readDecision(a, path, base);
+    case "gate":
+      return readGate(a, path, base);
+    case "reservation":
+      return readReservation(a, path, base);
   }
+}
+
+function instantaneous(base: Base, path: string, what: string, section: string): void {
+  if (base.end !== base.start)
+    throw new ReadError(path, `a ${what} is instantaneous, but end (${base.end}) != start (${base.start}) (${section})`);
+}
+
+function readDecision(a: Record<string, unknown>, path: string, base: Base): DecisionActivity {
+  instantaneous(base, path, "decision", "§6.14");
+  const node = readNodePath(a["node"], at(path, "node"));
+  if (node.length === 0) throw new ReadError(at(path, "node"), "a decision names its branch, loop or traversal (§6.14)");
+  const assumed = optBoolean(a["assumed"], at(path, "assumed"));
+  if (assumed === undefined) throw new ReadError(at(path, "assumed"), "a decision says whether it is assumed (§6.14)");
+  const out: { -readonly [K in keyof DecisionActivity]: DecisionActivity[K] } = {
+    ...base,
+    kind: "decision",
+    node,
+    assumed,
+    condition: readPortRef(a["condition"], at(path, "condition")),
+  };
+  if (a["arm"] !== undefined && a["arm"] !== null) out.arm = oneOf(a["arm"], at(path, "arm"), DECISION_ARMS);
+  const iteration = optNumber(a["iteration"], at(path, "iteration"));
+  if (iteration !== undefined) out.iteration = iteration;
+  const length = optNumber(a["length"], at(path, "length"));
+  if (length !== undefined) out.length = length;
+  return out;
+}
+
+function readGate(a: Record<string, unknown>, path: string, base: Base): GateActivity {
+  instantaneous(base, path, "gate", "§6.15");
+  const node = readNodePath(a["node"], at(path, "node"));
+  if (!node.includes(GATE_OUT))
+    throw new ReadError(at(path, "node"), `a gate's path names it with "${GATE_OUT}" (§6.3)`);
+  const spot = optString(a["spot"], at(path, "spot"));
+  return spot === undefined ? { ...base, kind: "gate", node } : { ...base, kind: "gate", node, spot };
+}
+
+function readReservation(a: Record<string, unknown>, path: string, base: Base): ReservationActivity {
+  const node = readNodePath(a["node"], at(path, "node"));
+  if (node.length === 0) throw new ReadError(at(path, "node"), "a reservation names its region (§6.16)");
+  const spots = stringList(a["spots"], at(path, "spots"));
+  if (!spots.length) throw new ReadError(at(path, "spots"), "a reservation keeps at least one spot (§6.16)");
+  return { ...base, kind: "reservation", node, spots };
+}
+
+function readExpansion(e: Record<string, unknown>): Expansion {
+  const list = (key: string): Record<string, unknown>[] =>
+    (optList(e[key], at("expansion", key)) ?? []).map((x, i) => reqRecord(x, at(at("expansion", key), i)));
+  const lengths = list("lengths").map((x, i) => {
+    const p = at(at("expansion", "lengths"), i);
+    const index = readIndex(x["index"], at(p, "index"));
+    return {
+      node: readNodePath(x["node"], at(p, "node")),
+      port: reqString(x["port"], at(p, "port")),
+      ...(index ? { index } : {}),
+      length: reqNumber(x["length"], at(p, "length")),
+    };
+  });
+  const arms = list("arms").map((x, i) => {
+    const p = at(at("expansion", "arms"), i);
+    return { node: readNodePath(x["node"], at(p, "node")), arm: oneOf(x["arm"], at(p, "arm"), BRANCH_ARMS) };
+  });
+  const loops = list("loops").map((x, i) => {
+    const p = at(at("expansion", "loops"), i);
+    const ended = optBoolean(x["ended"], at(p, "ended"));
+    if (ended === undefined) throw new ReadError(at(p, "ended"), "a loop's entry says whether it has ended (§6.13)");
+    return { node: readNodePath(x["node"], at(p, "node")), count: reqNumber(x["count"], at(p, "count")), ended };
+  });
+  return { lengths, arms, loops };
+}
+
+/** A list of spots nested as the Array it binds is (§6.8), or one spot. */
+function readSpotTree(raw: unknown, path: string): SpotTree {
+  if (Array.isArray(raw)) return raw.map((x, i) => readSpotTree(x, at(path, i)));
+  return reqString(raw, path);
 }
 
 type Base = { readonly status: ActivityStatus; readonly start: number; readonly end: number };
@@ -242,8 +345,7 @@ function readTransport(
 }
 
 function readRelay(a: Record<string, unknown>, path: string, base: Base): RelayActivity {
-  if (base.end !== base.start)
-    throw new ReadError(path, `a relay is instantaneous, but end (${base.end}) != start (${base.start}) (§6.4.1)`);
+  instantaneous(base, path, "relay", "§6.4.1");
   return {
     ...base,
     kind: "relay",
@@ -271,15 +373,57 @@ function readReplenishment(
   };
 }
 
-/** A node path is a list of ids; the empty list is the workflow interface. */
+/**
+ * A node path (§6.3): node ids, each invocation's position after the id of
+ * the node it belongs to, and for a gate `"@out"`, its port and any element
+ * index. The empty list is the workflow interface.
+ *
+ * Positions are what a viewer most easily gets wrong, so the shape is held to
+ * the rule: a position never starts a path, two never stand side by side
+ * (before a gate's port), and nothing but a port and positions follows
+ * `"@out"`.
+ */
 function readNodePath(raw: unknown, path: string): NodePath {
   if (raw === undefined || raw === null) return [];
-  return stringList(raw, path);
+  const steps = reqList(raw, path);
+  const gate = steps.indexOf(GATE_OUT);
+  steps.forEach((s, i) => {
+    const where = at(path, i);
+    if (typeof s === "number") {
+      if (!Number.isInteger(s) || s < 0) throw new ReadError(where, `an invocation's position is a non-negative integer, got ${s}`);
+      if (i === 0) throw new ReadError(where, "a path starts with a node id, not a position (§6.3)");
+      const afterPort = gate >= 0 && i > gate + 1;
+      if (!afterPort && typeof steps[i - 1] === "number")
+        throw new ReadError(where, "two positions never stand side by side in a path (§6.3)");
+      return;
+    }
+    if (typeof s !== "string") throw new ReadError(where, `expected a node id or a position, got ${JSON.stringify(s)}`);
+    if (s === GATE_OUT) {
+      if (i === 0 || i !== gate) throw new ReadError(where, `"${GATE_OUT}" follows a region's path, once (§6.3)`);
+      return;
+    }
+    if (gate >= 0 && i > gate + 1) throw new ReadError(where, `only a port and element positions follow "${GATE_OUT}" (§6.3)`);
+  });
+  if (gate >= 0 && typeof steps[gate + 1] !== "string")
+    throw new ReadError(path, `a gate's path names its port after "${GATE_OUT}" (§6.3)`);
+  return steps as NodePath;
+}
+
+function readIndex(raw: unknown, path: string): number[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  return reqList(raw, path).map((x, i) => {
+    const n = reqNumber(x, at(path, i));
+    if (!Number.isInteger(n) || n < 0) throw new ReadError(at(path, i), `an element's position is a non-negative integer, got ${n}`);
+    return n;
+  });
 }
 
 function readPortRef(raw: unknown, path: string): PortRef {
   const e = reqRecord(raw, path);
-  return { node: readNodePath(e["node"], at(path, "node")), port: reqString(e["port"], at(path, "port")) };
+  const node = readNodePath(e["node"], at(path, "node"));
+  const port = reqString(e["port"], at(path, "port"));
+  const index = readIndex(e["index"], at(path, "index"));
+  return index ? { node, port, index } : { node, port };
 }
 
 function readArc(raw: unknown, path: string): ArcRef {

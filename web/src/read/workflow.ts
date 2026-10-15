@@ -1,9 +1,10 @@
 /**
  * Read a workflow — ofplang v0.
  *
- * Only the subset the gate admits (`read/gate.ts`): no `$import`, no generics,
- * no structured nodes. Run the gate first and show its findings; this reader
- * assumes the document got past it and reads the plain shape.
+ * Plain and structured nodes (`map`, `fold`, `do_while`, `branch`, workflow
+ * spec §17-§20). `$import` and generics are the gate's to report
+ * (`read/gate.ts`); run it first and show its findings — this reader assumes
+ * the document got past it and reads the shape as written.
  */
 
 import { parse as parseYaml } from "yaml";
@@ -13,7 +14,9 @@ import type {
   Binding,
   CompositeProcess,
   NodeInvocation,
+  NodeKind,
   ObjectsSection,
+  OutputMode,
   PortDecl,
   ProcessDef,
   Workflow,
@@ -144,13 +147,74 @@ function readNode(raw: unknown, path: string): NodeInvocation {
   // (This read `data` until 2026-09-27 — a key the spec does not have, so
   // every Pure Data arc was silently dropped; nothing bundled then had one.)
   const bind = readSources(n["bind"], at(path, "bind"));
-  return {
+  const each = readSources(n["each"], at(path, "each"));
+  const carry = readSources(n["carry"], at(path, "carry"));
+  const args = readSources(n["args"], at(path, "args"));
+  const kind = readKind(n["kind"], at(path, "kind"));
+
+  const out: { -readonly [K in keyof NodeInvocation]: NodeInvocation[K] } = {
     id: reqString(n["id"], at(path, "id")),
-    process: reqString(n["process"], at(path, "process")),
+    kind,
+    // A branch names a process per arm instead (workflow spec 21.0).
+    process: kind === "branch" ? "" : reqString(n["process"], at(path, "process")),
     state: state.from,
     data: bind.from,
-    literals: bind.value,
+    // Any section may give a Pure Data input a literal; none of them is drawn.
+    literals: { ...each.value, ...carry.value, ...args.value, ...bind.value },
+    each: each.from,
+    carry: carry.from,
+    args: args.from,
   };
+  if (kind === "branch") {
+    const arm = (key: "then" | "else"): string | undefined => {
+      const a = optRecord(n[key], at(path, key));
+      return a ? reqString(a["process"], at(at(path, key), "process")) : undefined;
+    };
+    const then = arm("then");
+    if (then === undefined) throw new ReadError(at(path, "then"), "a branch names the process of its `then` arm (workflow spec §20)");
+    const otherwise = arm("else");
+    out.arms = otherwise === undefined ? { then } : { then, else: otherwise };
+  }
+  const condition = optRecord(n["condition"], at(path, "condition"));
+  if (condition) {
+    const c: { from?: string; value?: unknown; output?: string } = {};
+    const from = optString(condition["from"], at(at(path, "condition"), "from"));
+    const output = optString(condition["output"], at(at(path, "condition"), "output"));
+    if (from !== undefined) c.from = from;
+    if (output !== undefined) c.output = output;
+    if ("value" in condition) c.value = condition["value"];
+    out.condition = c;
+  }
+  const limit = optRecord(n["max_iterations"], at(path, "max_iterations"));
+  if (limit) {
+    const from = optString(limit["from"], at(at(path, "max_iterations"), "from"));
+    out.maxIterations = from !== undefined ? { from } : { value: limit["value"] };
+  }
+  const outputs = optRecord(n["outputs"], at(path, "outputs"));
+  if (outputs) {
+    const modes: Record<string, OutputMode> = {};
+    for (const [port, spec] of Object.entries(outputs)) {
+      const where = at(at(path, "outputs"), port);
+      const mode = reqString(reqRecord(spec, where)["mode"], at(where, "mode"));
+      if (!(OUTPUT_MODES as readonly string[]).includes(mode))
+        throw new ReadError(at(where, "mode"), `expected one of ${OUTPUT_MODES.join(" / ")}, got "${mode}"`);
+      modes[port] = mode as OutputMode;
+    }
+    out.outputs = modes;
+  }
+  return out;
+}
+
+const NODE_KINDS = ["map", "fold", "do_while", "branch"] as const;
+const OUTPUT_MODES = ["carry", "collect", "drop", "common"] as const;
+
+/** A node without `kind` is a plain invocation (workflow spec 2.3). */
+function readKind(raw: unknown, path: string): NodeKind {
+  if (raw === undefined || raw === null) return "invoke";
+  const kind = reqString(raw, path);
+  if (!(NODE_KINDS as readonly string[]).includes(kind))
+    throw new ReadError(path, `expected one of ${NODE_KINDS.join(" / ")}, got "${kind}"`);
+  return kind as NodeKind;
 }
 
 /**

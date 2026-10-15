@@ -7,8 +7,10 @@
  * defined by v0 but not supported by a particular implementation, the document
  * is valid v0 but unsupported by that implementation" (§4.4).
  *
- * The viewer supports **none** of the optional v0 features listed below. Saying
- * so plainly is the point — a silently wrong picture is worse than a refusal.
+ * The viewer supports the structured nodes (`node_map`, `node_fold`,
+ * `node_do_while`, `node_branch`) and none of the other optional v0 features.
+ * Saying so plainly is the point — a silently wrong picture is worse than a
+ * refusal.
  *
  * The decision rests on what the document *requires*, derived from its body,
  * not on what it declares. `features` may over-declare (§4.1: extra features
@@ -29,6 +31,9 @@ export const V0_FEATURES = [
 ] as const;
 
 export type FeatureName = (typeof V0_FEATURES)[number];
+
+/** The optional features this viewer draws (design.md, structured-draft). */
+export const SUPPORTED_FEATURES: readonly FeatureName[] = ["node_map", "node_fold", "node_do_while", "node_branch"];
 
 /** Structured node `kind` (§17-§20) → the feature it requires. */
 const NODE_KIND_FEATURE: Readonly<Record<string, FeatureName>> = {
@@ -111,12 +116,8 @@ export function gateWorkflow(raw: unknown): GateReport {
       const where = at(at(at(base, "body"), "nodes"), i);
       const feature = typeof kind === "string" ? NODE_KIND_FEATURE[kind] : undefined;
       if (feature) {
+        // Drawn as the node it is, its invocations counted from the plan.
         derived.add(feature);
-        findings.push({
-          what: `a structured node (\`kind: ${kind}\`)`,
-          at: where,
-          why: "the viewer draws source structure only and cannot show what this expands to (§17-§20)",
-        });
       } else {
         findings.push({
           what: `an unrecognised node kind (\`kind: ${String(kind)}\`)`,

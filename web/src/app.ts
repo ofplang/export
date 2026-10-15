@@ -12,17 +12,20 @@ import { parse as parseYaml } from "yaml";
 
 import { GANTT_VIEWS, type GanttView } from "./layout/gantt";
 import {
+  activitiesOn,
   ancestorKeys,
-  arcRoute,
   buildGraph,
   compositeKeys,
   edgeKey,
+  moveRoute,
+  processAt,
   visibleFor,
   type GraphNode,
 } from "./model/graph";
 import { tracingOf, type ObjectTrace } from "./model/objects";
-import { arcKey } from "./model/common";
-import { accessesDevices, activitiesUnder, buildScene, sameArc, type Scene } from "./model/scene";
+import { annotate } from "./model/annotate";
+import { arcKey, type NodePath } from "./model/common";
+import { accessesDevices, buildScene, sameArc, type Scene } from "./model/scene";
 import {
   carriesLabel,
   copyShareLink,
@@ -173,7 +176,7 @@ function litActivities(): Set<number> {
     for (const i of movesOn(sel)) out.add(i);
     return out;
   }
-  for (const i of activitiesUnder(scene, sel.key === "" ? [] : sel.key.split("."))) out.add(i);
+  if (state.graph) for (const i of activitiesOn(scene, state.graph, sel.key)) out.add(i);
   return out;
 }
 
@@ -209,7 +212,7 @@ function litNodes(): Highlight {
     // The edge itself traces; its two ends light, and nothing else does.
     lit.add(sel.fromKey);
     lit.add(sel.toKey);
-    for (const k of [...ancestorKeys(keyPath(sel.fromKey)), ...ancestorKeys(keyPath(sel.toKey))])
+    for (const k of [...ancestorKeys(graph, keyPath(sel.fromKey)), ...ancestorKeys(graph, keyPath(sel.toKey))])
       if (!lit.has(k)) onPath.add(k);
     return {
       lit,
@@ -219,7 +222,7 @@ function litNodes(): Highlight {
   }
   if (sel.kind === "node") {
     lit.add(sel.key);
-    for (const k of ancestorKeys(sel.key === "" ? [] : sel.key.split("."))) onPath.add(k);
+    for (const k of ancestorKeys(graph, keyPath(sel.key))) onPath.add(k);
     return { lit, onPath, subtree: sel.key };
   }
   if (sel.kind === "object") {
@@ -234,14 +237,14 @@ function litNodes(): Highlight {
     for (const i of trace.activities) {
       const a = scene.activities[i]!;
       if (a.kind !== "processing") continue;
-      const key = visibleFor(graph, a.node, state.expanded);
+      const key = visibleFor(graph, a.node, state.expanded, a.process);
       if (key !== undefined) lit.add(key);
-      for (const k of ancestorKeys(a.node)) onPath.add(k);
+      for (const k of ancestorKeys(graph, a.node, a.process)) onPath.add(k);
     }
     for (const key of trace.arcs) {
       const a = scene.activities[scene.byArc.get(key)![0]!]!;
       if (a.kind !== "transport" && a.kind !== "relay") continue;
-      for (const e of arcRoute(graph, a.arc) ?? []) edges.add(edgeKey(e));
+      for (const e of moveRoute(scene, graph, a.arc) ?? []) edges.add(edgeKey(e));
     }
     for (const k of lit) onPath.delete(k);
     return { lit, onPath, edges };
@@ -259,16 +262,20 @@ function activityHighlight(graph: GraphNode, scene: Scene | undefined, index: nu
   const onPath = new Set<string>();
   const activity = scene?.activities[index];
   if (activity) {
-    const paths =
+    // Each path with what runs there, which picks a branch's atomic arm.
+    const paths: [NodePath, string | undefined][] =
       activity.kind === "processing"
-        ? [activity.node]
+        ? [[activity.node, activity.process]]
         : activity.kind === "transport" || activity.kind === "relay"
-          ? [activity.arc.from.node, activity.arc.to.node]
-          : [];
-    for (const path of paths) {
-      const key = visibleFor(graph, path, state.expanded);
+          ? [activity.arc.from.node, activity.arc.to.node].map((p) => [p, scene ? processAt(scene, p) : undefined])
+          : activity.kind === "replenishment"
+            ? []
+            : [[activity.node, undefined]];
+    for (const [path, process] of paths) {
+      if (path.length === 0) continue;
+      const key = visibleFor(graph, path, state.expanded, process);
       if (key !== undefined) lit.add(key);
-      for (const k of ancestorKeys(path)) onPath.add(k);
+      for (const k of ancestorKeys(graph, path, process)) onPath.add(k);
     }
 
     // A move serves one arc. Trace the connections it runs along, so they
@@ -276,14 +283,14 @@ function activityHighlight(graph: GraphNode, scene: Scene | undefined, index: nu
     // composite open that is several — into its border, then down to the
     // step inside (D61); comparing only the two visible ends found none.
     if (activity.kind === "transport" || activity.kind === "relay") {
-      const route = arcRoute(graph, activity.arc);
+      const route = scene ? moveRoute(scene, graph, activity.arc) : undefined;
       if (route) {
         for (const k of lit) onPath.delete(k);
         return { lit, onPath, edges: new Set(route.map(edgeKey)) };
       }
       // Not this workflow's arc: fall back to the two ends as drawn.
-      const fromKey = visibleFor(graph, activity.arc.from.node, state.expanded);
-      const toKey = visibleFor(graph, activity.arc.to.node, state.expanded);
+      const fromKey = visibleFor(graph, activity.arc.from.node, state.expanded, scene && processAt(scene, activity.arc.from.node));
+      const toKey = visibleFor(graph, activity.arc.to.node, state.expanded, scene && processAt(scene, activity.arc.to.node));
       if (fromKey !== undefined && toKey !== undefined) {
         for (const k of lit) onPath.delete(k);
         return {
@@ -322,7 +329,7 @@ function movesOn(edge: EdgeRef): number[] {
   scene.activities.forEach((a, i) => {
     if (a.kind !== "transport" && a.kind !== "relay") return;
     const arc = arcKey(a.arc);
-    if (!on.has(arc)) on.set(arc, (arcRoute(graph, a.arc) ?? []).some((e) => edgeKey(e) === key));
+    if (!on.has(arc)) on.set(arc, (moveRoute(scene, graph, a.arc) ?? []).some((e) => edgeKey(e) === key));
     if (on.get(arc)) out.push(i);
   });
   return out;
@@ -638,6 +645,7 @@ function renderGraphPane(): void {
     ...(arc ? { arc } : {}),
     ...(subtree !== undefined ? { subtree } : {}),
     ...(edges ? { edges } : {}),
+    ...(state.scene ? { notes: annotate(state.scene, graph) } : {}),
   });
   host.setAttribute("viewBox", g.viewBox);
   host.setAttribute("width", String(Math.round(g.width * state.graphZoom)));
@@ -691,6 +699,10 @@ function renderLegend(): void {
     [counts.relay > 0, "relay", "relay"],
     [objects, "waiting", "waiting on a spot"],
     [!objects && counts.replenishment > 0, "replenishment", "refill"],
+    [!objects && counts.decision > 0, "decision", "decision"],
+    [counts.gate > 0, "gate", "gate"],
+    [!objects && counts.reservation > 0, "reserved", "spot kept"],
+    [!objects && scene.assumed.size > 0, "assumed", "assumed (may not happen)"],
   ];
   el("legend").innerHTML = items
     .filter(([on]) => on)

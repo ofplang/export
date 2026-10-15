@@ -142,6 +142,12 @@ export function renderGantt(scene: Scene, opts: GanttOptions): GanttGeometry {
       "bar",
       bar.style,
       a?.status === "completed" ? "done" : "",
+      // Work that stands on an outcome the plan only assumes (§6.14): outlined
+      // dashed, the cue that does not rest on colour.
+      // A held or kept band is too thin to carry a dash, and its move says it.
+      bar.index !== undefined && scene.assumed.has(bar.index) && bar.style !== "held" && bar.style !== "reserved"
+        ? "assumed"
+        : "",
       active && isLit ? "lit" : "",
       isLit && opts.focus !== undefined && bar.index === opts.focus ? "focus" : "",
       active && !on ? "dim" : "",
@@ -150,13 +156,27 @@ export function renderGantt(scene: Scene, opts: GanttOptions): GanttGeometry {
       .join(" ");
     const ids = `${bar.index === undefined ? "" : ` data-i="${bar.index}"`}${bar.object ? ` data-o="${esc(bar.object)}"` : ""}`;
 
-    if (bar.style === "relay") {
-      // A relay is instantaneous (§6.4.1) — a point, drawn as a small diamond.
+    if (bar.style === "relay" || bar.style === "gate") {
+      // A relay (§6.4.1) and a gate (§6.15) are instantaneous — a point, drawn
+      // as a small diamond; a gate's is hollow.
       const cx = scale.x(bar.start);
       const cy = y + BAR_H / 2;
       plot.push(
         `<rect class="${cls}"${ids} x="${cx - 4}" y="${cy - 4}" width="8" height="8" transform="rotate(45 ${cx} ${cy})"/>`,
       );
+      continue;
+    }
+
+    if (bar.style === "decision") {
+      // A decision is a moment too (§6.14): a marker pointing down at it, and
+      // what it decides beside it — the `?` of an assumed one included.
+      const cx = scale.x(bar.start);
+      plot.push(
+        `<path class="${cls}"${ids} d="M ${r(cx - 5)} ${r(y + 1)} H ${r(cx + 5)} L ${r(cx)} ${r(y + BAR_H - 1)} Z"/>`,
+      );
+      const room = nextStartOn(bar.lane, cx) - cx - 12;
+      const text = opts.showLabels ? fit(bar.label, room) : "";
+      if (text) plot.push(`<text class="bar-tx outside" x="${r(cx + 8)}" y="${y + BAR_H - 3.5}">${esc(text)}</text>`);
       continue;
     }
 
@@ -177,11 +197,12 @@ export function renderGantt(scene: Scene, opts: GanttOptions): GanttGeometry {
 
     const x0 = scale.x(bar.start);
     const x1 = scale.x(bar.end);
-    const held = bar.style === "held";
-    const w = Math.max(2.5, x1 - x0 - 2);
     // A held device is secondary information — the machine is blocked, but
     // nothing is happening on it. A band under the row says that without
-    // competing with the work itself.
+    // competing with the work itself. A kept spot (§6.16) is the same: nothing
+    // happens on it for being kept, and what does happen there sits above.
+    const held = bar.style === "held" || bar.style === "reserved";
+    const w = Math.max(2.5, x1 - x0 - 2);
     const h = held ? HELD_H : BAR_H;
     plot.push(
       `<rect class="${cls}"${ids} x="${x0 + 1}" y="${held ? y + BAR_H - HELD_H : y}" width="${w}" height="${h}"/>`,

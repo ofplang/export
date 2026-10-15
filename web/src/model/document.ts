@@ -5,7 +5,7 @@
  * activities separates them (§6.2). One reader serves both.
  */
 
-import type { ArcRef, DeviceId, NodePath, ResourceRef, SpotRef, TransporterId } from "./common";
+import type { ArcRef, DeviceId, NodePath, PortRef, ResourceRef, SpotRef, TransporterId } from "./common";
 
 export type Outcome = "optimal" | "feasible" | "infeasible" | "unknown";
 
@@ -23,10 +23,32 @@ export interface Objective {
   readonly value?: number | readonly number[];
 }
 
+/**
+ * §6.8. Where a boundary port's Objects sit: a spot, or for an Array a list of
+ * them in element order, nested as the Array is.
+ */
+export type SpotTree = SpotRef | readonly SpotTree[];
+
 /** §6.8. Boundary Object-bearing material pinned to spots. */
 export interface InterfaceBinding {
-  readonly inputs: Readonly<Record<string, SpotRef>>;
-  readonly outputs?: Readonly<Record<string, SpotRef>>;
+  readonly inputs: Readonly<Record<string, SpotTree>>;
+  readonly outputs?: Readonly<Record<string, SpotTree>>;
+}
+
+/**
+ * §6.13. What the run has said about the expansion: the length of a list, the
+ * arm a branch takes, how many invocations a loop has had. As written; where
+ * nothing is stated, a plan assumes (§6.14).
+ */
+export interface Expansion {
+  readonly lengths: readonly {
+    readonly node: NodePath;
+    readonly port: string;
+    readonly index?: readonly number[];
+    readonly length: number;
+  }[];
+  readonly arms: readonly { readonly node: NodePath; readonly arm: "then" | "else" }[];
+  readonly loops: readonly { readonly node: NodePath; readonly count: number; readonly ended: boolean }[];
 }
 
 /** §6.10. Consumable levels as of the start of the run. */
@@ -96,11 +118,55 @@ export interface ReplenishmentActivity extends ActivityBase {
   readonly amounts: Readonly<Record<string, number>>;
 }
 
+/**
+ * §6.14. The moment a run decides what the plan could only assume: the arm a
+ * branch takes, whether a loop goes on, how long a list is. Instantaneous, at
+ * the planned end of what the condition waits for; gone from the plan once
+ * that has happened. `assumed` says whether the plan stands on a guess.
+ */
+export interface DecisionActivity extends ActivityBase {
+  readonly kind: "decision";
+  readonly node: NodePath;
+  readonly assumed: boolean;
+  /** Where the value the decision reads is made. */
+  readonly condition: PortRef;
+  /** A branch's arm (`then` / `else`); a loop's `exit` after `iteration`, or `continue`. */
+  readonly arm?: "then" | "else" | "exit" | "continue";
+  /** A loop: the invocation (from 0) the decision follows. */
+  readonly iteration?: number;
+  /** A traversal: its length, assumed or stated. */
+  readonly length?: number;
+}
+
+/**
+ * §6.15. Where a region's outcome leaves it: what follows starts from here
+ * whichever way the region was decided. Instantaneous. `spot` is where an
+ * Object waits in it; a Pure Data gate has none.
+ */
+export interface GateActivity extends ActivityBase {
+  readonly kind: "gate";
+  readonly node: NodePath;
+  readonly spot?: SpotRef;
+}
+
+/**
+ * §6.16. Spots kept for a region while its outcome is open, so the plan holds
+ * whichever way it turns out. A window on spots, not on any device.
+ */
+export interface ReservationActivity extends ActivityBase {
+  readonly kind: "reservation";
+  readonly node: NodePath;
+  readonly spots: readonly SpotRef[];
+}
+
 export type Activity =
   | ProcessingActivity
   | TransportActivity
   | RelayActivity
-  | ReplenishmentActivity;
+  | ReplenishmentActivity
+  | DecisionActivity
+  | GateActivity
+  | ReservationActivity;
 
 /** An activity that carries a logical arc — every leg and junction of a move. */
 export type ArcActivity = TransportActivity | RelayActivity;
@@ -114,6 +180,7 @@ export interface ExecutionDocument {
   /** The reference time of a replan (§6.1). Absent on an initial plan. */
   readonly now?: number;
   readonly interface?: InterfaceBinding;
+  readonly expansion?: Expansion;
   readonly inventories?: Inventories;
   readonly outcome?: Outcome;
   readonly objective?: Objective;

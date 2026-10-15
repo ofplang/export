@@ -407,6 +407,19 @@ main {
 .gnode.dim {
   opacity: 0.32;
 }
+/* A branch's arms (§20): one the plan only assumes is dashed, one no
+   invocation took recedes — line style and weight, not colour. */
+.gnode.arm.assumed > .box {
+  stroke-dasharray: 4 3;
+  stroke: var(--ink-2);
+}
+.gnode.arm.ran > .box {
+  stroke: var(--ink-2);
+  stroke-width: 1.6;
+}
+.gnode.arm.idle:not(.lit):not(.on-path) {
+  opacity: 0.55;
+}
 
 .gnode .nid {
   fill: var(--ink);
@@ -557,6 +570,32 @@ main {
   height: 2px;
   border-radius: 0;
   background: var(--muted);
+}
+.sw.gate {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  border: 1.5px solid var(--transport);
+  background: var(--panel);
+}
+.sw.decision {
+  width: 10px;
+  height: 9px;
+  border-radius: 0;
+  background: var(--ink-2);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.sw.reserved {
+  height: 4px;
+  background: var(--muted);
+  opacity: 0.5;
+}
+.sw.assumed {
+  box-sizing: border-box;
+  border: 1.2px dashed var(--ink-2);
+  background: var(--processing);
 }
 .sw.replenishment {
   position: relative;
@@ -731,6 +770,32 @@ svg {
   fill-opacity: 0.42;
   rx: 1;
   stroke: none;
+}
+/* A spot kept for a region while its outcome is open (§6.16). The held band's
+   size and place, on the spot's own lane, in no work's hue: nothing happens
+   on the spot for being kept. */
+.bar.reserved {
+  fill: var(--muted);
+  fill-opacity: 0.5;
+  rx: 1;
+  stroke: none;
+}
+/* A gate (§6.15): instantaneous, the relay's diamond, hollow. */
+.bar.gate {
+  fill: var(--bg, #fff);
+  stroke: var(--transport);
+  stroke-width: 1.5;
+}
+/* A decision (§6.14): a marker at its moment. */
+.bar.decision {
+  fill: var(--ink-2);
+}
+/* Work that may not happen: inside an assumed arm, or the one invocation a
+   list not yet counted is planned on (§6.14). Dashed — not a colour. */
+.bar.assumed {
+  stroke: var(--ink-2);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 2;
 }
 .bar.done {
   opacity: 0.55;

@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { arcRoute, buildGraph, compositeKeys, edgeKey } from "../src/model/graph";
+import { arcRoute, buildGraph, compositeKeys, edgeKey, graphTrail, moveRoute, processAt } from "../src/model/graph";
 import { layoutGraph } from "../src/layout/graph";
 import { objectsOf, traceObjects, unaccountedPorts, type ObjectTrace } from "../src/model/objects";
 import { buildScene, type Scene } from "../src/model/scene";
@@ -306,9 +306,12 @@ describe("every plan arc runs along connections the graph draws", () => {
       for (const [key, legs] of scene.byArc) {
         const a = scene.activities[legs[0]!]!;
         if (!("arc" in a)) continue;
-        const route = arcRoute(graph, a.arc);
+        // What runs at either end picks a branch's atomic arm, as the app looks it up.
+        const route = moveRoute(scene, graph, a.arc);
         expect(route, key).toBeDefined();
-        expect(route!.length, key).toBeGreaterThan(0);
+        // Round a fold's or a loop's carry inside one box, nothing is drawn to follow.
+        const box = (p: typeof a.arc.from.node) => graphTrail(graph, p, processAt(scene, p)).at(-1)?.key;
+        if (box(a.arc.from.node) !== box(a.arc.to.node)) expect(route!.length, key).toBeGreaterThan(0);
         // Fully open, every step of the route is on screen.
         for (const e of route!) expect(drawn.has(edgeKey(e)), `${key}: ${edgeKey(e)}`).toBe(true);
       }

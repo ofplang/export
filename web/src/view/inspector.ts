@@ -1,13 +1,15 @@
 /** The right-hand panel: the plan at a glance, or the selected activity. */
 
-import { arcKey, pathKey } from "../model/common";
-import { findNode, type GraphNode } from "../model/graph";
+import { arcKey, pathKey, pathText, type NodePath, type PortRef } from "../model/common";
+import type { SpotTree } from "../model/document";
+import { annotate } from "../model/annotate";
+import { activitiesOn, findNode, type GraphNode } from "../model/graph";
 import { tracingOf, type ObjectTrace, type SegmentKind } from "../model/objects";
-import { accessesDevices, activitiesUnder } from "../model/scene";
+import { accessesDevices } from "../model/scene";
 import type { Activity } from "../model/document";
 import type { Scene } from "../model/scene";
 import { formatDuration, unitAbbrev } from "../layout/scale";
-import { activityLabel } from "../layout/gantt";
+import { activityLabel, decisionText } from "../layout/gantt";
 
 const esc = (s: unknown): string =>
   String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -63,7 +65,7 @@ function overview(scene: Scene, blurb: string): string {
     block(
       "Activities",
       dl(
-        (["processing", "transport", "relay", "replenishment"] as const)
+        (["processing", "transport", "relay", "replenishment", "decision", "gate", "reservation"] as const)
           .filter((k) => counts[k] > 0)
           .map((k) => [k, counts[k]] as const),
       ),
@@ -92,11 +94,30 @@ function overview(scene: Scene, blurb: string): string {
 
   if (doc.interface) {
     const rows = [
-      ...Object.entries(doc.interface.inputs).map(([p, s]) => [`in · ${p}`, s] as const),
-      ...Object.entries(doc.interface.outputs ?? {}).map(([p, s]) => [`out · ${p}`, s] as const),
+      ...Object.entries(doc.interface.inputs).map(([p, s]) => [`in · ${p}`, spotTreeText(s)] as const),
+      ...Object.entries(doc.interface.outputs ?? {}).map(([p, s]) => [`out · ${p}`, spotTreeText(s)] as const),
     ];
     if (rows.length)
       out.push(block("Boundary", dl(rows) + `<div class="note" style="margin-top:8px">Where the workflow's own material starts and ends up.</div>`));
+  }
+
+  // What the run has said about the expansion (§6.13): the rest of the plan
+  // stands on assumptions, which its decisions name (§6.14).
+  const ex = doc.expansion;
+  if (ex && (ex.arms.length || ex.loops.length || ex.lengths.length)) {
+    const rows: (readonly [string, unknown])[] = [
+      ...ex.arms.map((x) => [pathText(x.node), `arm ${x.arm}`] as const),
+      ...ex.loops.map((x) => [pathText(x.node), `${x.count} invocation${x.count === 1 ? "" : "s"}${x.ended ? ", ended" : ", going on"}`] as const),
+      ...ex.lengths.map((x) => [`${x.node.length ? pathText(x.node) : "inputs"}.${x.port}${x.index ? `[${x.index.join(",")}]` : ""}`, `${x.length} long`] as const),
+    ];
+    out.push(
+      block(
+        "Decided",
+        dl(rows) +
+          `<div class="note" style="margin-top:8px">What the run has stated about the branches, loops and lists ` +
+          `(§6.13). Anything not stated is assumed by the plan, and its decision says so.</div>`,
+      ),
+    );
   }
 
   if (doc.occupied?.length) {
@@ -199,11 +220,53 @@ function detail(scene: Scene, index: number): string {
         ),
       );
       break;
+    case "decision":
+      out.push(
+        block(
+          "Decision",
+          dl([
+            ["node", pathText(a.node)],
+            ["decides", decisionText(a)],
+            ["reads", portText(a.condition)],
+            ["stands", a.assumed ? "assumed — the run has not said yet" : "stated by the run"],
+          ]) +
+            `<div class="note" style="margin-top:8px">The moment the run reads the value and decides (§6.14). ` +
+            `Nothing the outcome decides starts before it.</div>`,
+        ),
+      );
+      break;
+    case "gate":
+      out.push(
+        block(
+          "Gate",
+          dl([["node", pathText(a.node)], ["spot", a.spot ?? "— (Pure Data)"]]) +
+            `<div class="note" style="margin-top:8px">Where the region's outcome leaves it, whichever way it was ` +
+            `decided; what follows starts from here (§6.15).</div>`,
+        ),
+      );
+      break;
+    case "reservation":
+      out.push(
+        block(
+          "Kept",
+          dl([["for", pathText(a.node)], ...a.spots.map((sp) => ["spot", sp] as const)]) +
+            `<div class="note" style="margin-top:8px">Spots kept for the region while its outcome is open, so ` +
+            `the plan holds whichever way it turns out (§6.16). Devices are not kept.</div>`,
+        ),
+      );
+      break;
   }
+  if (scene.assumed.has(index))
+    out.push(
+      block(
+        "Assumed",
+        `<div class="note">This stands on an outcome the plan only assumes; the run may decide otherwise, ` +
+          `and then it does not happen (§6.14).</div>`,
+      ),
+    );
 
   if (a.kind === "transport" || a.kind === "relay") {
-    const end = (e: { node: readonly string[]; port: string }): string =>
-      `${e.node.length ? e.node.join("/") : "⟨interface⟩"} . ${e.port}`;
+    const end = (e: PortRef): string => (e.node.length ? portText(e) : `⟨interface⟩ . ${e.port}${indexText(e.index)}`);
     const legs = scene.byArc.get(arcKey(a.arc)) ?? [];
     out.push(
       block(
@@ -251,6 +314,7 @@ const SEGMENT_WORD: Readonly<Record<SegmentKind, string>> = {
   waiting: "waiting on a spot",
   transport: "moving",
   relay: "at a relay",
+  gate: "through a gate",
 };
 
 /** A selected Object: where it comes from, where it ends, and everything between. */
@@ -260,7 +324,7 @@ export function renderObjectDetail(scene: Scene, t: ObjectTrace): string {
   const last = t.segments[t.segments.length - 1]!;
   const out = [`<div><h3>object</h3><div class="lead">${esc(t.label)}</div></div>`];
 
-  const port = (node: readonly string[], p: string): string => `${node.join(".")}.${p}`;
+  const port = (node: NodePath, p: string): string => `${pathText(node)}.${p}`;
   out.push(
     block(
       "Life",
@@ -303,6 +367,14 @@ export function waitTooltip(scene: Scene, object: string, start: number, end: nu
   return `<div class="tt">${esc(`waiting on ${spot}`)}</div><div class="tl">${lines.map(esc).join("<br>")}</div>`;
 }
 
+/** A boundary port's spots: one, or a list nested as its Array is (§6.8). */
+const spotTreeText = (t: SpotTree): string => (typeof t === "string" ? t : `[${t.map(spotTreeText).join(", ")}]`);
+
+const indexText = (index: readonly number[] | undefined): string => (index ? `[${index.join(",")}]` : "");
+
+/** One end of an arc or a decision's condition: `Each/0/Look . dirty`. */
+const portText = (e: PortRef): string => `${e.node.length ? pathText(e.node) : "inputs"} . ${e.port}${indexText(e.index)}`;
+
 /** A literal as written: a string quoted, a number or a list as it reads. */
 const literal = (v: unknown): string => JSON.stringify(v) ?? String(v);
 
@@ -323,6 +395,10 @@ export function tooltipFor(scene: Scene, index: number): string {
     );
   if (a.kind === "relay") lines.push(`waiting at ${a.spot}`);
   if (a.kind === "replenishment") lines.push(`${a.device} · ${a.replenisher}`);
+  if (a.kind === "decision") lines.push(`${decisionText(a)} · reads ${portText(a.condition)}`);
+  if (a.kind === "gate" && a.spot) lines.push(`on ${a.spot}`);
+  if (a.kind === "reservation") lines.push(`keeps ${a.spots.join(", ")}`);
+  if (scene.assumed.has(index)) lines.push("assumed — may not happen");
   if (a.status !== "pending") lines.push(`status: ${a.status}`);
   return `<div class="tt">${esc(activityLabel(a))}</div><div class="tl">${lines.map(esc).join("<br>")}</div>`;
 }
@@ -373,11 +449,23 @@ export function renderNodeDetail(graph: GraphNode, key: string, scene?: Scene): 
   if (!node) return "";
   const out: string[] = [];
 
-  out.push(
-    `<div><h3>${esc(node.kind)} node</h3><div class="lead">${esc(node.key || node.process)}</div></div>`,
-  );
+  const what =
+    node.structure === "invoke" ? `${node.kind} node` : node.structure === "arm" ? `${node.arm} arm` : `${node.structure} node`;
+  out.push(`<div><h3>${esc(what)}</h3><div class="lead">${esc(node.key || node.process)}</div></div>`);
 
-  const rows: (readonly [string, unknown])[] = [["process", node.process]];
+  const rows: (readonly [string, unknown])[] = [];
+  if (node.structure !== "branch") rows.push(["process", node.process || "— (each argument as it came, §20)"]);
+  if (node.structure === "branch") {
+    rows.push(["condition", node.condition ?? "a literal"]);
+    for (const arm of node.children) rows.push([`${arm.arm} arm`, arm.process || "— (as it came)"]);
+  }
+  if (node.limit !== undefined) rows.push(["at most", `${node.limit} invocations`]);
+  const note = scene ? annotate(scene, graph).get(node.key) : undefined;
+  if (note?.invocations !== undefined) rows.push(["invocations", note.invocations]);
+  if (note && node.structure === "arm") {
+    rows.push(["taken", note.ran ?? 0]);
+    if (note.assumed) rows.push(["assumed", `${note.assumed} — the run has not said yet`]);
+  }
   if (node.kind === "composite") {
     rows.push(["atomic steps", node.atomicCount], ["nodes inside", node.children.length]);
   }
@@ -398,9 +486,10 @@ export function renderNodeDetail(graph: GraphNode, key: string, scene?: Scene): 
     );
 
   if (scene) {
-    const under = activitiesUnder(scene, node.key === "" ? [] : node.key.split("."));
+    const under = activitiesOn(scene, graph, node.key);
     const acts = under.map((i) => scene.activities[i]!);
     const steps = acts.filter((a) => a.kind === "processing").length;
+    const moves = acts.filter((a) => a.kind === "transport" || a.kind === "relay").length;
     const window =
       acts.length > 0
         ? `${Math.min(...acts.map((a) => a.start))} – ${Math.max(...acts.map((a) => a.end))} ${unitAbbrev(scene.unit)}`
@@ -410,7 +499,7 @@ export function renderNodeDetail(graph: GraphNode, key: string, scene?: Scene): 
         "In the plan",
         dl([
           ["steps", steps],
-          ["moves", acts.length - steps],
+          ["moves", moves],
           ["window", window],
         ]),
       ),

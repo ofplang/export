@@ -68,8 +68,8 @@ describe("which box stands for a node", () => {
   });
 
   it("lists the boxes between the root and a node", () => {
-    expect(ancestorKeys(["b2", "rep1", "peal"])).toEqual(["b2", "b2.rep1"]);
-    expect(ancestorKeys(["source"])).toEqual([]);
+    expect(ancestorKeys(plateBatch, ["b2", "rep1", "peal"])).toEqual(["b2", "b2.rep1"]);
+    expect(ancestorKeys(plateBatch, ["source"])).toEqual([]);
   });
 });
 
