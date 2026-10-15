@@ -6,11 +6,14 @@ reads only as much YAML as the command needs to do its job:
 - which of plan / workflow / environment each file is, by its top-level keys;
 - the workflow and environment a plan names in `meta` (§6.1), so that one
   plan is enough to ask for (D32);
-- whether the page will refuse the plan outright, or draw only part of the
-  workflow — so that the caller hears it here, not after opening the file.
+- whether the page will draw only part of the workflow, or a plan of several
+  jobs without its workflow — so that the caller hears it here, not after
+  opening the file. (It would refuse a plan outright too, but nothing is refused
+  at present.)
 
-The two checks mirror `gateDocument` and `gateWorkflow` in `web/src/read/gate.ts`
-and look at the same keys. They are not validation: `ofp-validate` owns that.
+The checks mirror `gateDocument` and `gateWorkflow` in `web/src/read/gate.ts`, and
+the `meta` half of `whyNotOneWorkflow` in `web/src/model/jobs.ts`, and look at the
+same keys. They are not validation: `ofp-validate` owns that.
 """
 
 from __future__ import annotations

@@ -155,8 +155,8 @@ const traced = (scene: Scene): readonly ObjectTrace[] => {
   return t.traces;
 };
 
-it("the corpus is the twelve bundled plans", () => {
-  expect(plans.length).toBeGreaterThanOrEqual(12);
+it("the corpus is the twenty bundled plans", () => {
+  expect(plans.length).toBeGreaterThanOrEqual(20);
 });
 
 describe("every bundled plan traces", () => {

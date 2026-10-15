@@ -3,8 +3,8 @@
  *
  * This is the whole mechanism that keeps a hand-written TypeScript reader
  * honest against a specification owned by another repository (design.md D5/D6):
- * the submodule is pinned by tag, so nothing changes under us, and raising the
- * pin turns red here if the document schema moved.
+ * the submodule is pinned to one commit, so nothing changes under us, and raising
+ * the pin turns red here if the document schema moved.
  *
  * It deliberately asserts spec invariants rather than a byte-for-byte snapshot.
  * A snapshot would break on every cosmetic change to the examples; these

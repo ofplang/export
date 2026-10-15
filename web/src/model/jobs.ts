@@ -3,11 +3,11 @@
  *
  * Every view that joins the plan to the graph assumes one workflow: one
  * graph, one namespace of node paths. A plan of several jobs is that only
- * where every job runs the same workflow — said by its `meta`, where every
- * job names the same file, or shown by the plan itself, where every one of
- * its activities joins to the workflow given. A plan that does neither is
- * drawn on its own, and says why (design.md D75): pairing a job's activity
- * with another workflow's box would light the wrong box.
+ * where every job runs the same workflow: its `meta` does not name two
+ * different files (a run's `<in-memory>` names none), and every one of its
+ * activities joins to the workflow given. A plan that fails either is drawn on
+ * its own, and says why (design.md D75): pairing a job's activity with another
+ * workflow's box would light the wrong box.
  */
 
 import { GATE_OUT, isBoundary, isGatePath, pathText, type PortRef } from "./common";

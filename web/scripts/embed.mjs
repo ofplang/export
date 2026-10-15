@@ -2,12 +2,12 @@
  * Put documents into a single-file viewer (design.md D48).
  *
  * The contract between the template and anything that fills it — this
- * module, the tests, and the Python CLI of stage D — is one element:
+ * module, the tests, and the Python CLI (`ofplang/export/template.py`) — is one element:
  *
  *   <script type="application/json" id="ofp-documents" data-contract="1">…</script>
  *
  * whose content is `null` (an empty viewer, to drop files on) or a JSON object
- * `{ name, plan?, workflow?, environment? }`, each document being the YAML
+ * `{ name, plan?, workflow?, environment?, ui? }`, each document being the YAML
  * text as written. The page parses the YAML itself, with the same reader it
  * uses for a dropped file, so nothing here interprets a document.
  *

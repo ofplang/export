@@ -3,8 +3,8 @@
  *
  * The golden test only ever feeds it documents that pass, so a gate hard-wired
  * to `supported: true` would sail through it. These are the negative cases:
- * one per construct the viewer refuses, plus the two ways a document can look
- * unsupported without being so.
+ * one per construct the viewer reports (and draws only in part), plus the two
+ * ways a document can look unsupported without being so.
  */
 
 import { parse as parseYaml } from "yaml";
@@ -49,7 +49,7 @@ describe("a plain v0 workflow", () => {
 });
 
 describe("$import", () => {
-  it("is refused, and asks for expansion rather than listing features", () => {
+  it("is reported, and asks for expansion rather than listing features", () => {
     const r = gate(`
 spec_version: "0.0"
 processes:
@@ -104,7 +104,7 @@ entry: main
     expect(r.findings).toEqual([]);
   });
 
-  it("an unrecognised kind is refused rather than guessed at", () => {
+  it("an unrecognised kind is reported rather than guessed at", () => {
     const r = gate(withKind("scatter"));
     expect(r.supported).toBe(false);
     expect(r.derived).toEqual([]); // not a v0 feature, so nothing is derived

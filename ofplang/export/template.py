@@ -89,7 +89,7 @@ def thin(payload: dict[str, Any], viewer: str) -> str:
     A thin page: the documents, and one script that brings the viewer.
 
     Small enough for Claude to write out as an artifact, where the single file
-    (the template, some 190 KB of script) is not. The documents element is the
+    (the template, some 210 KB of script) is not. The documents element is the
     same contract as the template's, so the page reads them the same way.
     """
     title = html.escape(str(payload.get("name") or "documents"))

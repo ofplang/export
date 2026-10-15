@@ -2,8 +2,8 @@
 
 The page itself is exercised in the browser tests (web/tests/e2e/single.spec.ts,
 which also opens files this command wrote). What is checked here is the
-command's own job: finding the documents, deciding what to refuse or warn
-about, and putting the text into the template unchanged.
+command's own job: finding the documents, deciding what to warn about (and to
+refuse, which is nothing at present), and putting the text into the template unchanged.
 """
 
 from __future__ import annotations
@@ -276,7 +276,7 @@ def test_a_template_without_the_element_or_of_another_contract_is_refused():
         embed(TEMPLATE.replace(f'data-contract="{CONTRACT}"', 'data-contract="9"'), {"name": "x"})
 
 
-# ── refused, warned, wrong ─────────────────────────────────────────────────
+# ── several jobs, warned, wrong ──────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("plan", ["shared_bay.plan.yaml", "shared_refill.plan.yaml", "stopped_job.plan.yaml"])
@@ -308,13 +308,13 @@ def test_jobs_of_different_workflows_are_written_with_a_warning(tmp_path, templa
 
 
 def test_a_workflow_drawn_only_in_part_is_written_with_a_warning(tmp_path, template, capsys):
-    wf = tmp_path / "mapped.workflow.yaml"
+    wf = tmp_path / "unexpanded.workflow.yaml"
     wf.write_text(
         (EXAMPLES / "reformatter.workflow.yaml").read_text(encoding="utf-8")
         + "\nx-extra:\n  $import: other.yaml\n",
         encoding="utf-8",
     )
-    out = tmp_path / "m.html"
+    out = tmp_path / "unexpanded.html"
     code, stdout, err = run(capsys, str(wf), "-o", str(out), "--template", str(template), "--json")
     assert code == EXIT_OK and out.exists()
     assert "warning: $import" in err

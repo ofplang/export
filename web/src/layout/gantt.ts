@@ -1,7 +1,7 @@
 /**
  * Gantt lanes and bars.
  *
- * Three ways to slice the same plan, ported from `ofp-schedule`'s
+ * Four ways to slice the same plan, the first three ported from `ofp-schedule`'s
  * `visualize.py` (design.md D12 — the algorithm, not the code):
  *
  * - `device`   one lane per machine. A move draws a solid bar on its

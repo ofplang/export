@@ -112,7 +112,7 @@ one script tag that loads it from a CDN:
 <script type="module" src="https://cdn.jsdelivr.net/npm/@ofplang/export-viewer@0.1.5/ofp-view.js"></script>
 ```
 
-That is a few kilobytes of documents rather than some 190 KB, for a page
+That is a few kilobytes of documents rather than some 210 KB, for a page
 something else has to carry — a claude.ai artifact, which Claude writes out
 token by token. It needs the network to open. The script is the version of
 the command that wrote the page; each release builds it (`npm run build:single`
@@ -138,7 +138,7 @@ A development build has none, so it takes `--viewer-url`.
 | `ofplang/export/` | the `ofp-export` Python package; `template.py` is the same contract in Python |
 | `tests/` | its tests (pytest), against the pinned submodule's examples |
 | `skills/ofp-export/SKILL.md` | how an agent calls `ofp-export`; not in the package |
-| `datasets/curated/` | plans bundled here that the submodule does not ship (`data_flow`), with their provenance |
+| `datasets/curated/` | plans bundled here that the submodule does not ship (`data_flow`, `plate_assay`), with their provenance |
 | `web/tests/golden/` | every example the pinned submodule ships must read |
 | `web/tests/routing.test.ts` | no arc of any bundled workflow runs through a box it does not join |
 | `external/ofplang-schedule` | submodule, pinned to a commit of ofplang/schedule — specifications and examples |
@@ -150,12 +150,15 @@ A development build has none, so it takes `--viewer-url`.
 The sibling repositories own the specifications and the semantics, and this one
 does not modify them. It also has to run with nothing installed on the viewer's
 machine, which rules out a Python pre-processing step. So the document readers
-here are a deliberate, bounded re-implementation of two stable schemas —
-`SPECIFICATIONS.md` §5 (environment) and §6 (execution document) — kept honest
-by the golden test against the pinned submodule's own examples.
+here are a deliberate, bounded re-implementation of three stable schemas —
+`SPECIFICATIONS.md` §5 (environment) and §6 (execution document), and the
+workflow spec with its structured nodes — kept honest by the golden test against
+the pinned submodule's own examples.
 
-Anything outside that subset — `$import`, generics, jobs of different workflows
-in one plan — is left out and said so rather than guessed at.
+What the viewer does not draw is said rather than guessed at: a workflow with
+`$import`, generics or an unrecognised node kind is drawn with a banner naming
+what it leaves out, and a plan whose jobs run different workflows is drawn on
+its own, without the graph.
 
 ## Working on it
 

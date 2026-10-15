@@ -2,7 +2,7 @@
  * Read a workflow — ofplang v0.
  *
  * Plain and structured nodes (`map`, `fold`, `do_while`, `branch`, workflow
- * spec §17-§20). `$import` and generics are the gate's to report
+ * spec §17-§20). `$import`, generics, inline scripts and unknown node kinds are the gate's to report
  * (`read/gate.ts`); run it first and show its findings — this reader assumes
  * the document got past it and reads the shape as written.
  */

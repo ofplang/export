@@ -14,7 +14,7 @@ documents, and one script tag that loads the viewer — what
 The module brings its stylesheet and the page's markup with it and puts them
 into the page before the viewer starts; the documents element is the same one
 the single-file viewer carries. A thin page is a few KB where the single file
-is some 190 KB, which is what makes it something Claude can write out as a
+is some 210 KB, which is what makes it something Claude can write out as a
 claude.ai artifact.
 
 Every version is built and published by the release workflow of

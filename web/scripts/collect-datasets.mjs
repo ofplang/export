@@ -28,7 +28,12 @@ const BLURBS = {
   two_arms: "Two transporters competing for the same moves.",
   reformatter: "Eight plate operations that fan out and merge back.",
   plate_batch: "Three levels of nesting — two branches of two repeat units.",
-  interface_load: "Boundary material: the workflow's entry input is pinned to a spot.",
+  dispense_read: "A fold dispensing one reagent into three plates in turn, and a map reading them on two readers.",
+  labels: "A map over a list of labels: one cup made and filled per label, as many as the run states.",
+  wash_or_polish: "A branch per cup, its arm stated before the run: washed if dirty, polished if not.",
+  inspect_then_wash:
+    "A branch per cup on a flag measured during the run: planned on its assumed arm, the spots either arm needs kept.",
+  rinse_until_clean: "A plate rinsed and read until the reading says clean: a loop decided during the run.",
   consumable: "A reagent the reader starts without, and the single refill that covers both assays.",
   reroute: "The planned transporter is gone, so the rest of the move is replanned around it.",
   reroute_chain: "A move that takes two hops, with the plate waiting at a relay in between.",

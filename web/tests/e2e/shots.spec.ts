@@ -205,7 +205,7 @@ test("one pane on its own (D46)", async ({ page }) => {
   await shot(page, "layout.narrow");
 });
 
-test("the feature gate, refusing something it cannot draw", async ({ page }) => {
+test("the feature gate, reporting something it cannot draw", async ({ page }) => {
   await page.goto("/?doc=plate_batch");
   await settle(page);
   // Nothing in the corpus trips it, so the banner is staged here rather than

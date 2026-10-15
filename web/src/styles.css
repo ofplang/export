@@ -782,7 +782,7 @@ svg {
 }
 /* A gate (§6.15): instantaneous, the relay's diamond, hollow. */
 .bar.gate {
-  fill: var(--bg, #fff);
+  fill: var(--panel);
   stroke: var(--transport);
   stroke-width: 1.5;
 }

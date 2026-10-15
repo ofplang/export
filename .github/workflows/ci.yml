@@ -31,7 +31,7 @@ jobs:
         working-directory: web
 
       # The Pages build, then the same build folded into one file: the viewer
-      # template the Python CLI will carry (design.md D48). Kept for every run
+      # template the Python CLI carries (design.md D48). Kept for every run
       # so any commit's template can be picked up.
       - run: npm run build:single
         working-directory: web

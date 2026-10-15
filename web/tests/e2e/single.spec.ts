@@ -2,7 +2,7 @@
  * The single-file viewer, opened the way people will open it: from disk.
  *
  * `npm run test:e2e` builds `dist-single/viewer.html` first. Each test writes
- * documents into it with the same `embed()` the Python CLI will mirror, then
+ * documents into it with the same `embed()` the Python CLI mirrors, then
  * opens the result over `file://` — no server, which is the whole point of
  * the single file (design.md D48).
  */

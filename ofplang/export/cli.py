@@ -8,7 +8,8 @@ opened from disk with nothing beside it. Further targets would sit beside it
 as their own subcommands (design.md D49).
 
 Exit codes (design.md D50):
-  0  written (possibly with warnings: parts of the workflow the viewer cannot draw)
+  0  written (possibly with warnings: parts of the workflow the viewer cannot draw,
+     jobs of different workflows, or an Object view that cannot be offered)
   2  bad input: a missing or unreadable file, nothing to draw, a bad option
   3  refused: a document the viewer does not draw at all; nothing written (none at present)
 
@@ -96,7 +97,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "write a thin page instead: the documents and one script tag that loads this version's "
-            "viewer from jsDelivr (npm). A few KB rather than some 190 KB, for a page something "
+            "viewer from jsDelivr (npm). A few KB rather than some 210 KB, for a page something "
             "else has to carry, such as a claude.ai artifact; it needs the network to open"
         ),
     )

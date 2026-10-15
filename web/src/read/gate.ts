@@ -32,7 +32,7 @@ export const V0_FEATURES = [
 
 export type FeatureName = (typeof V0_FEATURES)[number];
 
-/** The optional features this viewer draws (design.md, structured-draft). */
+/** The optional features this viewer draws (design.md §28, D71–D72). */
 export const SUPPORTED_FEATURES: readonly FeatureName[] = ["node_map", "node_fold", "node_do_while", "node_branch"];
 
 /** Structured node `kind` (§17-§20) → the feature it requires. */
@@ -186,5 +186,5 @@ export function gateSummary(r: GateReport): string {
   if (r.needsExpansion)
     return "This workflow still has $import in it. Expand it first — ofp-validate can do that — then load the result.";
   const names = [...new Set(r.findings.map((f) => f.what))];
-  return `This viewer cannot draw ${names.join(", ")} faithfully, so parts of the graph are left out.`;
+  return `This viewer cannot draw ${names.join(", ")} faithfully, so parts of the graph are left out or shown only as they are written.`;
 }

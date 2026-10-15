@@ -12,7 +12,7 @@
  * published to npm as @ofplang/export-viewer by the release workflow (package
  * source in web/npm/) and served by jsDelivr from /npm/ (design.md D69).
  * An artifact on claude.ai is one such page: Claude writes the documents, not
- * the 170 KB of viewer.
+ * the 210 KB of viewer.
  */
 
 import { execSync } from "node:child_process";

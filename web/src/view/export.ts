@@ -26,8 +26,11 @@ const TOKENS = [
   "--now",
 ] as const;
 
-/** The subset of the stylesheet the chart markup actually uses. */
-function chartStyle(resolve: (token: string) => string): string {
+/**
+ * The subset of the stylesheet the chart markup uses. Every bar style the layouts
+ * draw needs a rule here, or an exported chart loses it (`tests/export.test.ts`).
+ */
+export function chartStyle(resolve: (token: string) => string): string {
   const v = (t: string): string => resolve(t) || "#000";
   return `
     .lane-alt { fill: ${v("--sunken")}; opacity: .5 }
@@ -46,6 +49,10 @@ function chartStyle(resolve: (token: string) => string): string {
     .refill-plus { stroke: ${v("--on-data")}; stroke-width: 1.4; stroke-linecap: round }
     .bar.held { fill: ${v("--transport")}; fill-opacity: .42; rx: 1 }
     .bar.waiting { fill: ${v("--muted")}; rx: 0 }
+    .bar.reserved { fill: ${v("--muted")}; fill-opacity: .5; rx: 1 }
+    .bar.gate { fill: ${v("--panel")}; stroke: ${v("--transport")}; stroke-width: 1.5 }
+    .bar.decision { fill: ${v("--ink-2")} }
+    .bar.assumed { stroke: ${v("--ink-2")}; stroke-width: 1.2; stroke-dasharray: 3 2 }
     .wait-hit { fill: none }
     .bar.done { opacity: .55 }
     .bar.dim { opacity: .16 }

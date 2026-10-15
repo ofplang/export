@@ -6,8 +6,9 @@
  * fragment never leaves the browser, which is also why it is the right half of
  * the URL for this.
  *
- * Measured on the bundled corpus, the largest of them lands around 2,200
- * characters (dev-notes D22), so there is no need for a size strategy — just a
+ * Measured on the bundled corpus, the largest of them lands around 3,100
+ * characters (`plate_assay`, of the twenty bundled in 0.1.9; 2,200 when D22
+ * measured twelve), so there is no need for a size strategy — just a
  * ceiling, past which the link would break in some mail client and the person
  * should be pointed at a bundled plan or a raw URL instead.
  */

@@ -32,7 +32,7 @@ Also reachable as `ofp export view …` (and `lc export view …` under labcode)
   workflow — that is what tells one plate from another — and the page opens on
   the device view where the Objects cannot be told apart.
 - `--thin` writes a page of a few KB — the documents and one script tag that
-  loads the viewer from a CDN — instead of the ~190 KB single file. Use it when
+  loads the viewer from a CDN — instead of the ~210 KB single file. Use it when
   you have to write the page out yourself, as an artifact: copy the file's text
   into the artifact unchanged. It needs the network to open; a file to send
   someone is better without `--thin`.
@@ -46,7 +46,8 @@ Also reachable as `ofp export view …` (and `lc export view …` under labcode)
 | 3 | refused — nothing written | tell the person why (stderr); nothing is refused at present (a plan of several `jobs` is drawn from 0.1.9) |
 
 Warnings (exit 0) mean part of the workflow is shown only as its source
-structure — `$import` not expanded, generics —, that a plan's jobs run
+structure — `$import` not expanded, generics, an inline script, an unrecognised
+node kind —, that a plan's jobs run
 different workflows (the plan is then drawn without one), or that
 `--gantt object` was asked for without a workflow, so the page opens on the
 device view. The file is still worth sending; say what is missing.

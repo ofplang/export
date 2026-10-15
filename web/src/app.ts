@@ -124,7 +124,11 @@ interface State {
   blurb: string;
   source: string;
   gate?: GateReport;
-  /** Why a plan that was given is not drawn (D42) — absent when it was, or when none was given. */
+  /**
+   * Why a plan that was given is not drawn at all — absent when it was, or when none
+   * was given. Nothing sets it at present: the joint plans it was for (D42) are drawn
+   * since 0.1.9 (D75). The hook stays for a document a later page cannot read.
+   */
   refused?: readonly Finding[];
   view: GanttView;
   zoom: number;
@@ -667,7 +671,9 @@ function renderGraphPane(): void {
     host.removeAttribute("width");
     host.removeAttribute("height");
     host.innerHTML = "";
-    hint.textContent = "No workflow was loaded with this plan.";
+    hint.textContent = state.unlinked
+      ? "The plan is drawn without its workflow — the banner says why."
+      : "No workflow was loaded with this plan.";
     return;
   }
 
@@ -806,8 +812,8 @@ function renderBanner(): void {
   const gate = state.gate;
   const workflowGated = !!gate && !gate.supported;
   if (state.refused) {
-    // Every mark of a joint plan has the same reason, so it is said once, in
-    // the headline, and the list only says where each mark was found.
+    // Every finding has the same reason, so it is said once, in the headline,
+    // and the list only says where each was found. (Reached by nothing at present.)
     showBanner(`This plan was not drawn: ${state.refused[0]!.why}.`, [
       ...state.refused.map((f) => `${escapeHtml(f.what)} at <code>${escapeHtml(f.at)}</code>`),
       ...(workflowGated ? gate.findings.map(findingLine) : []),

@@ -3,8 +3,8 @@
  *
  * Only the subset this viewer reads: types, atomic and composite processes,
  * node invocations — plain and structured (§17-§20) — and their bindings.
- * `$import` and generics are out of scope and are reported by the feature
- * gate (design.md D10).
+ * `$import`, generics, inline scripts and unrecognised node kinds are
+ * reported by the feature gate (design.md D10).
  */
 
 export interface PortDecl {
